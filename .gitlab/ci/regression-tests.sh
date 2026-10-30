@@ -138,7 +138,6 @@ run_tests xai-grok-pager lib \
     'acp_failed_terminal_without_error_text_keeps_failure_color' \
     'confirmed_tool_outcomes_override_running_and_invalidate_cached_paint' \
     'scrollback::render::tests::' \
-    'acp::tracker::tests::' \
     'app::acp_handler::tests::progress_lifecycle::' \
     'app::acp_handler::tests::session_events::' \
     'app::acp_handler::tests::terminal_activity_integration::' \
@@ -151,18 +150,43 @@ run_tests xai-grok-pager lib \
     'views::dashboard::render::tests::' || status=$?
 
 run_tests xai-grok-pager lib --all-executed \
+    'app::effects::tests::' \
+    'app::dispatch::tests::task_result::' \
+    'app::acp_handler::tests::subagent_cancel_f3::' \
+    'acp::tracker::tests::' \
+    'acp::tracker::tests::runtime::' \
+    'app::subagent::tests::' \
+    'app::subagent::tests::row_timestamp_replay::' || status=$?
+
+run_tests xai-grok-pager-render lib --all-executed \
+    'theme::tests::' \
+    'render::terminal_output::tests::' || status=$?
+
+run_tests xai-grok-pager lib --all-executed \
+    'views::todo_pane::tests::completed_and_cancelled_rows_carry_dimmed_primary_text' \
+    'views::dashboard::render::tests::render_row_selected_brightens_secondary_text' \
+    'views::dashboard::render::tests::hovered_row_secondary_text_stays_visible_on_terminal_theme' \
+    'scrollback::render::tests::dim_from_entry_stays_visible_on_terminal_theme' \
+    -- --exact || status=$?
+
+run_tests xai-grok-pager lib --all-executed \
+    'app::dispatch::tests::turn::' \
+    'app::acp_handler::tests::turn_completion::' \
+    'views::queue_pane::tests::' \
+    'views::dashboard::chrome::tests::' \
+    'views::dashboard::peek::tests::' \
     'scrollback::scrollback_pane::tests::' \
     'scrollback::wrappers::entry_renderer::tests::' \
     'app::session_views::inline_output::tests::' \
     'app::session_views::inline_output::paint_tests::' \
     'app::session_views::inline_output::completion_tests::' \
+    'app::session_views::inline_output::terminal_tests::' \
     'scrollback::blocks::markdown_content::source_tests::' \
     'scrollback::blocks::markdown_content::tests::' \
     'scrollback::blocks::agent::tests::' \
     'scrollback::blocks::thinking::tests::' \
     'views::block_viewer::tests::' \
     'acp::tracker::tests::whitespace_thought_chunk_is_preserved_until_a_blank_block_is_finished' \
-    'acp::tracker::tests::runtime::' \
     'app::acp_handler::tests::terminal_activity_integration::' \
     'app::acp_handler::tests::terminal_activity_integration::terminal_during_reload_cannot_cross_live_and_historical_legacy_owners' \
     'app::acp_handler::tests::terminal_activity_integration::registered_terminal_cannot_confirm_a_drained_legacy_entry_with_the_same_provider' \
@@ -222,6 +246,8 @@ run_tests xai-grok-shell lib --all-executed \
     'session::acp_session::turn_end_reporting_tests::a_completion_arriving_after_its_cancel_reports_nothing' \
     'session::acp_session::cancel_running_task_tests::cancel_running_task_interactive_preserves_queued_work' \
     'session::acp_session::cancel_running_task_tests::cancel_after_own_completion_sweep_preserves_queued_user_prompt' \
+    'session::acp_session::cancel_running_task_tests::named_target_cancel_removes_queued_wake_row' \
+    'session::acp_session::cancel_running_task_tests::named_target_cancel_of_finished_wake_arms_barrier_without_terminal' \
     -- --exact || status=$?
 
 run_tests xai-grok-shell lib --all-executed \
@@ -235,6 +261,46 @@ run_tests xai-grok-shell lib --all-executed \
 run_tests xai-grok-shell lib --all-executed \
     'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::completed_native_worker_receiver_contention_is_unconfirmed_without_model_input' \
     -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'session::storage::replay_tests::' \
+    'session::storage::replay_tests::row_timestamps::' \
+    'agent::mvp_agent::replay_tests::' \
+    'agent::mvp_agent::replay_tests::row_timestamps::' || status=$?
+
+# Restart native harnesses own a worker runtime and run in separate processes.
+run_tests xai-grok-shell lib --all-executed \
+    'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::restart_native_submission::' || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::restart_disk_submission::' || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'agent::subagent::spawn::native_crash_adoption_tests::native_restart_custody::' || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'leader::restart_policy::tests::' \
+    'agent::mvp_agent::tests::restart_cohort_load::' \
+    'agent::mvp_agent::tests::list_running_heal_tests::' \
+    'agent::mvp_agent::tests::child_prompt_tests::restart_child_submission::' \
+    'session::acp_session::restart_reactivation_tests::' \
+    'session::storage::jsonl::completion::tests::restart_cohort::' \
+    'session::workflow::tracker::tests::' \
+    'session::workflow::manager::' \
+    'session::workflow::manager::durability_tests::restart_cancellation::' || status=$?
+
+run_tests xai-grok-tools lib --all-executed \
+    'implementations::grok_build::task::backend::tests::' \
+    'implementations::grok_build::task_output::query_transport_tests::' \
+    'implementations::grok_build::list_subagents::tests::' \
+    'implementations::grok_build::control_subagent::tests::' \
+    'implementations::grok_build::task::coordinator::cancel_f3_tests::' || status=$?
+
+run_tests xai-grok-tools lib --all-executed \
+    'implementations::grok_build::task::coordinator::child_submission_tests::' \
+    'implementations::grok_build::task::coordinator::wake_tests::' \
+    'implementations::grok_build::scheduler::actor::restart_cohort_tests::' \
+    'implementations::grok_build::scheduler::actor::tests::stale_startup_' || status=$?
 
 run_tests xai-grok-shell lib --all-executed \
     'session::acp_session::cancel_running_task_tests::cancel_propagates_to_sampler_handle_so_no_further_emission' \
@@ -264,7 +330,10 @@ run_tests xai-grok-shell lib \
     'transient_retry_loop_tests::' \
     'storage::summary_write::tests::observational_appends_preserve_activity_and_legacy_fallback' \
     'storage::summary_write::tests::loading_identity_does_not_change_activity_or_legacy_fallback' \
-    'unified_list::row::tests::list_dtos_preserve_exact_activity_separately_from_effective_updated_time' || status=$?
+    'unified_list::row::tests::list_dtos_preserve_exact_activity_separately_from_effective_updated_time' \
+    -- \
+    --skip 'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::restart_native_submission::' \
+    --skip 'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::restart_disk_submission::' || status=$?
 
 # Ordered publication and custody repairs must execute every compiled case.
 run_tests xai-acp-lib lib --all-executed \
@@ -272,6 +341,8 @@ run_tests xai-acp-lib lib --all-executed \
     'publication_tests::receiver_settlement_cannot_be_selected_after_sharing_using_or_exporting_the_sender' || status=$?
 
 run_tests xai-grok-shell lib --all-executed \
+    'session::acp_session::cancel::settlement::tests::' \
+    'session::acp_session::turn_end::durability_tests::' \
     'session::acp_session::updates::ordered_publication_tests::' \
     'session::acp_session::updates::ordered_publication_tests::durable_producer_enrollment_survives_allocation_persistence_and_held_receiver' \
     'session::acp_session::updates::ordered_publication_tests::stale_queued_record_needs_actual_receiver_discard_completion' \
@@ -296,7 +367,8 @@ run_tests xai-grok-shell lib --all-executed \
     'agent::subagent::spawn::native_crash_adoption_tests::adoption_attempt_teardown::' \
     'agent::subagent::spawn::native_crash_adoption_tests::adoption_explicit_cancel::' \
     'native_released_attempt_end_rejects_backend_stop_after_real_runner_snapshot' \
-    'native_released_attempt_stop_before_terminal_decision_is_durably_cancelled' || status=$?
+    'native_released_attempt_stop_before_terminal_decision_is_durably_cancelled' \
+    -- --skip 'agent::subagent::spawn::native_crash_adoption_tests::native_restart_custody::' || status=$?
 
 run_tests xai-grok-shell lib --all-executed \
     'tools::notification_bridge::tests::consumed_background::' \

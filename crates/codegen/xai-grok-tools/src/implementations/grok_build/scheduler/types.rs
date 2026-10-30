@@ -157,6 +157,8 @@ impl Default for SchedulerClock {
 
 #[derive(thiserror::Error, Debug)]
 pub enum SchedulerError {
+    #[error("session awaits a new user message after stale restart")]
+    RestartQuiescent,
     #[error("invalid interval: {0}")]
     InvalidInterval(String),
 
@@ -195,6 +197,7 @@ pub fn scheduler_tool_error(error: SchedulerError) -> xai_tool_runtime::ToolErro
         SchedulerError::NoDurableNotificationConsumer => "scheduler_durability_unavailable",
         SchedulerError::RemovalPending(_) => "scheduler_removal_pending",
         SchedulerError::Cancelled => "scheduler_cancelled",
+        SchedulerError::RestartQuiescent => "scheduler_restart_quiescent",
         SchedulerError::Timeout => "scheduler_timeout",
     };
     xai_tool_runtime::ToolError::custom(code, error.to_string())

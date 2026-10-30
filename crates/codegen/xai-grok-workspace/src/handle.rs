@@ -1055,6 +1055,9 @@ impl WorkspaceHandle {
         let terminal_backend = session.terminal_backend().clone();
         let truncation =
             crate::session::tool_config::truncation_config_for_host(self.shared.host_kind);
+        let restart_recovery = session.toolset().get_resource_cloned::<
+            xai_grok_tools::types::restart_recovery::SessionRestartRecovery,
+        >().await.ok_or_else(|| crate::error::WorkspaceError::Finalize("restart recovery owner missing".into()))?;
         let resolve_result = tokio::task::spawn_blocking(move || {
             crate::session::tool_config::resolve_session_toolset_rebuild(
                 new_config,
@@ -1071,6 +1074,7 @@ impl WorkspaceHandle {
                 notification_handle,
                 terminal_backend,
                 truncation,
+                crate::session::tool_config::RestartRecoveryBinding::Existing(restart_recovery),
             )
         })
         .await

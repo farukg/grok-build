@@ -16,6 +16,11 @@ use xai_grok_tools::registry::types::{
     FinalizedToolset, ToolConfig, ToolRegistryBuilder, ToolServerConfig,
 };
 use xai_grok_tools::types::tool::ToolKind;
+pub(crate) enum RestartRecoveryBinding {
+    NewContext,
+    Existing(xai_grok_tools::types::restart_recovery::SessionRestartRecovery),
+}
+
 /// Test helper: same as [`resolve_session_toolset_for_host`] with a default truncation config.
 /// Production binds go through `resolve_session_toolset_for_host` so a sandbox host can cap polls.
 #[cfg(test)]
@@ -53,6 +58,7 @@ pub(crate) fn resolve_session_toolset(
         notification_handle,
         terminal_backend.backend().clone(),
         xai_grok_tools::types::context::TruncationConfig::default(),
+        RestartRecoveryBinding::NewContext,
     )?;
     Ok((effective, toolset, terminal_backend))
 }
@@ -93,6 +99,7 @@ pub(crate) fn resolve_session_toolset_for_host(
         notification_handle,
         terminal_backend.backend().clone(),
         truncation_config_for_host(host_kind),
+        RestartRecoveryBinding::NewContext,
     )?;
     Ok((effective, toolset, terminal_backend))
 }
@@ -125,6 +132,7 @@ pub(crate) fn resolve_session_toolset_rebuild(
     notification_handle: Option<xai_grok_tools::notification::types::ToolNotificationHandle>,
     terminal_backend: Arc<dyn xai_grok_tools::computer::types::TerminalBackend>,
     truncation: xai_grok_tools::types::context::TruncationConfig,
+    restart_recovery: RestartRecoveryBinding,
 ) -> WorkspaceResult<(ToolServerConfig, Arc<FinalizedToolset>)> {
     let mut builder = factory.registry_builder();
     if let Some(lr) = local_registry {
@@ -150,6 +158,10 @@ pub(crate) fn resolve_session_toolset_rebuild(
         behavior_preset: filtered.behavior_preset.clone(),
     };
     let mut ctx = factory.build_session_context(session_id, cwd, session_env, terminal_backend);
+    match restart_recovery {
+        RestartRecoveryBinding::NewContext => {},
+        RestartRecoveryBinding::Existing(recovery) => ctx.restart_recovery = recovery,
+    }
     if let Some(lsp_handle) = lsp {
         ctx.lsp = Some(lsp_handle);
     }
@@ -531,7 +543,7 @@ impl SessionContextFactory for WorkspaceSessionContextFactory {
             auth_provider: self.auth.clone(),
             attribution_callback: None,
             system_reminder_tag: xai_grok_tools::reminders::DEFAULT_REMINDER_TAG,
-            restart_stop_age: Default::default(),
+            restart_recovery: Default::default(),
         }
     }
     fn build_terminal_backend(&self) -> crate::config::SessionTerminalBackend {
@@ -686,7 +698,7 @@ pub mod test_support {
                 auth_provider: None,
                 attribution_callback: None,
                 system_reminder_tag: xai_grok_tools::reminders::DEFAULT_REMINDER_TAG,
-                restart_stop_age: Default::default(),
+                restart_recovery: Default::default(),
             }
         }
         fn build_terminal_backend(&self) -> crate::config::SessionTerminalBackend {

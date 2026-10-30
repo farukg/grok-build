@@ -222,6 +222,8 @@ impl CompletionObligation {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CompletionDeliveryState {
     #[serde(default)]
+    pub(crate) restart_admission: xai_grok_tools::types::restart_recovery::RestartAdmission,
+    #[serde(default)]
     pub(crate) receiver: super::delivery_receiver::DeliveryReceiverState,
     #[serde(default)]
     pub(crate) wake_policy: CompletionWakePolicy,
@@ -254,7 +256,8 @@ impl CompletionDeliveryState {
             return;
         };
         match obligation {
-            CompletionObligation::Suppressed { source, .. } => match source {
+            CompletionObligation::Suppressed { reason: CompletionSuppression::StaleRestart, .. } => {},
+            CompletionObligation::Suppressed { reason: CompletionSuppression::GoalNotificationPolicy, source, .. } => match source {
                 SuppressedCompletionSource::AwaitingEnrollment => {}
                 SuppressedCompletionSource::Enrolled(payload) => {
                     *obligation = CompletionObligation::Projected { receipt: receipt.clone(), payload: payload.clone() };
@@ -305,7 +308,8 @@ impl CompletionDeliveryState {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.receiver.records.is_empty()
+        self.restart_admission == xai_grok_tools::types::restart_recovery::RestartAdmission::Unaffected
+            && self.receiver.records.is_empty()
             && self.obligations.is_empty()
             && self.receipts.is_empty()
             && self.wake_policy == CompletionWakePolicy::Automatic
@@ -315,14 +319,20 @@ impl CompletionDeliveryState {
             CompletionMutation::WakePolicy(policy) => self.wake_policy = *policy,
             CompletionMutation::Suppress { ids, reason } => {
                 for id in ids {
-                    if self.receipts.iter().any(|receipt| receipt.completion == *id)
-                        || self.obligations.iter().any(|obligation| obligation.id() == *id && obligation.receipt().is_some()) { continue; }
+                    match reason {
+                        CompletionSuppression::GoalNotificationPolicy => {
+                            if self.receipts.iter().any(|receipt| receipt.completion == *id)
+                                || self.obligations.iter().any(|obligation| obligation.id() == *id && obligation.receipt().is_some()) { continue; }
+                        }
+                        CompletionSuppression::StaleRestart => {},
+                    }
                     let source = self.obligations.iter().find_map(|obligation| {
                         if obligation.id() != *id { return None; }
                         match obligation {
-                            CompletionObligation::Pending { payload, .. } => Some(SuppressedCompletionSource::Enrolled(payload.clone())),
+                            CompletionObligation::Pending { payload, .. }
+                            | CompletionObligation::Projected { payload, .. } => Some(SuppressedCompletionSource::Enrolled(payload.clone())),
                             CompletionObligation::Suppressed { source, .. } => Some(source.clone()),
-                            CompletionObligation::Preparing { .. } | CompletionObligation::Projected { .. } => None,
+                            CompletionObligation::Preparing { .. } => None,
                         }
                     }).unwrap_or_default();
                     self.obligations.retain(|obligation| obligation.id() != *id);
@@ -332,6 +342,12 @@ impl CompletionDeliveryState {
             CompletionMutation::Enrolled { id, payload } => {
                 let observed = self.receipts.iter().find(|receipt| receipt.completion == *id).cloned();
                 if let Some(obligation @ CompletionObligation::Suppressed { .. }) = self.obligations.iter_mut().find(|obligation| obligation.id() == *id) {
+                    if let CompletionObligation::Suppressed { reason: CompletionSuppression::StaleRestart, source, .. } = obligation {
+                        if matches!(source, SuppressedCompletionSource::AwaitingEnrollment) {
+                            *source = SuppressedCompletionSource::Enrolled(payload.clone());
+                        }
+                        return;
+                    }
                     match observed {
                         Some(receipt) => *obligation = CompletionObligation::Projected { receipt, payload: payload.clone() },
                         None => {

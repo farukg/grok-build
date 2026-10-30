@@ -436,6 +436,7 @@ pub struct DashboardState {
     pub grouping: Grouping,
     /// Last v2 grouping observed by the renderer; transition detection only.
     workspace_grouping: Option<Grouping>,
+    pub(crate) running_order: super::running_order::RunningOrder,
     pub filter: Filter,
     /// Search mode (toggled by `Ctrl+/`). While active the [`Self::dispatch`] buffer is interpreted as
     /// a live filter query rather than a prompt: every keystroke reparses into.
@@ -1189,6 +1190,7 @@ impl DashboardState {
             reorder: Vec::new(),
             grouping: Grouping::default(),
             workspace_grouping: None,
+            running_order: Default::default(),
             filter: Filter::None,
             search_mode: false,
             dispatch,

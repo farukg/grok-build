@@ -789,6 +789,9 @@ impl SessionActor {
         objective: &str,
         token_budget: Option<i64>,
     ) -> GoalSetupOutcome {
+        if !self.restart_recovery_permitted() {
+            return GoalSetupOutcome::Message("Send a new message before starting a goal after stale restart.".into());
+        }
         let goal_id = uuid::Uuid::new_v4().to_string();
         let created_at = chrono::Utc::now().to_rfc3339();
         let token_baseline = self.chat_state_handle.get_total_tokens().await as i64;
@@ -866,6 +869,9 @@ impl SessionActor {
     }
 
     pub(super) async fn resume_goal(&self) -> GoalResumeOutcome {
+        if !self.restart_recovery_permitted() {
+            return GoalResumeOutcome::Message("Send a new message before resuming a goal after stale restart.".into());
+        }
         use crate::session::goal_tracker::GoalStatus;
         enum ResumeTransition {
             Resumed {

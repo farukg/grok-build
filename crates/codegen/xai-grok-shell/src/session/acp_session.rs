@@ -97,6 +97,8 @@ mod goal;
 mod named_workflow_args;
 #[path = "acp_session_impl/turn.rs"]
 mod turn;
+#[path = "acp_session_impl/restart_recovery.rs"]
+mod restart_recovery;
 #[path = "acp_session_impl/workflow.rs"]
 mod workflow_run;
 pub(crate) use turn::SUBAGENT_USAGE_DRAIN;
@@ -1785,6 +1787,9 @@ mod project_instructions_idempotence_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/prompt_gate_tests.rs"]
 mod prompt_gate_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/restart_reactivation_tests.rs"]
+mod restart_reactivation_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/prompt_mode_transition_tests.rs"]
 mod prompt_mode_transition_tests;

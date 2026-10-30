@@ -883,7 +883,7 @@ async fn background_spawn_acks_when_pending_before_session_start() {
     let snapshot = harness
         .backend
         .query("bg-start", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("pending child is queryable");
     assert!(matches!(
         snapshot.status,
@@ -950,7 +950,7 @@ async fn foreground_deadline_hands_off_without_stopping_child() {
     let running = harness
         .backend
         .query("slow", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .unwrap();
     assert!(running.is_running());
     let _ = harness.finish.send(());
@@ -1002,7 +1002,7 @@ async fn live_blocking_waiter_suppresses_async_surface() {
     tokio::task::yield_now().await;
     let wait = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.query("waited", true, Some(60_000), None).await }
+        async move { backend.query("waited", true, Some(60_000), None).await.expect("query acknowledgement") }
     });
     tokio::task::yield_now().await;
     let _ = harness.finish.send(());
@@ -1027,7 +1027,7 @@ async fn timed_out_waiter_does_not_suppress_later_completion() {
     let snapshot = harness
         .backend
         .query("timeout", true, Some(1_000), None)
-        .await
+        .await.expect("query acknowledgement")
         .unwrap();
     assert!(snapshot.is_running());
 
@@ -1057,7 +1057,7 @@ async fn surviving_waiter_suppresses_after_peer_times_out() {
         async move {
             backend
                 .query("two-waiters", true, Some(1_000), None)
-                .await
+                .await.expect("query acknowledgement")
                 .unwrap()
         }
     });
@@ -1066,7 +1066,7 @@ async fn surviving_waiter_suppresses_after_peer_times_out() {
         async move {
             backend
                 .query("two-waiters", true, Some(60_000), None)
-                .await
+                .await.expect("query acknowledgement")
                 .unwrap()
         }
     });
@@ -1101,7 +1101,7 @@ async fn dropped_waiter_does_not_suppress_completion() {
         async move {
             backend
                 .query("dropped-wait", true, Some(60_000), None)
-                .await
+                .await.expect("query acknowledgement")
         }
     });
     tokio::task::yield_now().await;
@@ -1134,7 +1134,7 @@ async fn pending_cancel_delivers_waiter_once() {
         async move {
             backend
                 .query("pending-cancel", true, Some(60_000), None)
-                .await
+                .await.expect("query acknowledgement")
         }
     });
     tokio::task::yield_now().await;
@@ -1146,7 +1146,7 @@ async fn pending_cancel_delivers_waiter_once() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::Cancelled { .. }
     ));
     let snapshot = wait.await.unwrap().unwrap();
@@ -1177,7 +1177,7 @@ async fn caller_drop_during_initialization_does_not_drop_owned_run() {
     let initializing = harness
         .backend
         .query("owned", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .unwrap();
     assert!(matches!(
         initializing.status,
@@ -1194,7 +1194,7 @@ async fn caller_drop_during_initialization_does_not_drop_owned_run() {
     let terminal = harness
         .backend
         .query("owned", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .unwrap();
     assert!(terminal.status.is_terminal());
     harness.actor.abort();
@@ -1261,7 +1261,7 @@ async fn finishing_parent_turn_drain_keeps_independent_background_child_running(
     let snapshot = h
         .backend
         .query("survives-turn-end", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("child survives parent drain");
     assert!(matches!(
         snapshot.status,
@@ -1271,7 +1271,7 @@ async fn finishing_parent_turn_drain_keeps_independent_background_child_running(
     let final_state = h
         .backend
         .query("survives-turn-end", true, Some(600_000), None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("child result");
     assert!(matches!(
         final_state.status,
@@ -1372,7 +1372,7 @@ async fn caller_observation_keeps_surviving_query_and_clears_on_last_receiver_dr
         async move {
             backend
                 .query("query-observation", true, Some(1_000), None)
-                .await
+                .await.expect("query acknowledgement")
         }
     });
     h.caller
@@ -1384,7 +1384,7 @@ async fn caller_observation_keeps_surviving_query_and_clears_on_last_receiver_dr
     assert!(futures::poll!(&mut second).is_pending());
     h.backend
         .query("query-observation", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("live snapshot");
     tokio::time::advance(std::time::Duration::from_secs(1)).await;
     first
@@ -1442,7 +1442,7 @@ async fn caller_observation_clears_when_foreground_budget_hands_off_live_child()
     let snapshot = h
         .backend
         .query("handoff-observation", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("child remains running");
     assert!(matches!(
         snapshot.status,
@@ -1721,7 +1721,7 @@ async fn abandoned_foreground_caller_clears_outstanding() {
     let running = harness
         .backend
         .query("abandoned", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .unwrap();
     assert!(running.is_running(), "child keeps running after ParentGone");
 
@@ -1757,7 +1757,7 @@ async fn duplicate_subagent_id_is_rejected_without_replacing_live_child() {
     let running = harness
         .backend
         .query("duplicate", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("original child remains queryable");
     assert!(running.is_running());
     let _ = harness.finish.send(());
@@ -1902,19 +1902,19 @@ async fn workflow_cancel_waits_for_drain_and_hides_owned_children() {
         harness
             .backend
             .query(WORKFLOW_CHILD_ID, false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_none()
     );
     assert!(
         harness
             .backend
             .query("workflow-pending", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_none()
     );
-    assert!(harness.backend.inspect(WORKFLOW_CHILD_ID).await.is_some());
-    assert!(harness.backend.inspect("workflow-pending").await.is_some());
-    assert!(harness.backend.list_running("parent").await.is_empty());
+    assert!(harness.backend.inspect(WORKFLOW_CHILD_ID).await.expect("coordinator ACK").is_some());
+    assert!(harness.backend.inspect("workflow-pending").await.expect("coordinator ACK").is_some());
+    assert!(harness.backend.list_running("parent").await.expect("coordinator ACK").is_empty());
     let (list_respond_to, list_response_rx) = oneshot::channel();
     harness
         .backend
@@ -1936,7 +1936,7 @@ async fn workflow_cancel_waits_for_drain_and_hides_owned_children() {
             respond_to: cancel_respond_to,
         }))
         .expect("actor command channel open");
-    assert!(harness.backend.inspect(WORKFLOW_CHILD_ID).await.is_some());
+    assert!(harness.backend.inspect(WORKFLOW_CHILD_ID).await.expect("coordinator ACK").is_some());
     assert!(matches!(
         cancel_response_rx.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
@@ -1953,10 +1953,10 @@ async fn workflow_cancel_waits_for_drain_and_hides_owned_children() {
         harness
             .backend
             .query(WORKFLOW_CHILD_ID, false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_none()
     );
-    assert!(harness.backend.inspect(WORKFLOW_CHILD_ID).await.is_some());
+    assert!(harness.backend.inspect(WORKFLOW_CHILD_ID).await.expect("coordinator ACK").is_some());
 
     let (completions_respond_to, completions_response_rx) = oneshot::channel();
     harness
@@ -2396,7 +2396,7 @@ async fn queued_resume_inherits_the_source_type_before_admission() {
     let snapshot = harness
         .backend
         .query("queued-resume", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("queued resume stays queryable");
     assert_eq!(snapshot.subagent_type, "plan");
     assert!(matches!(
@@ -2411,6 +2411,7 @@ async fn queued_resume_inherits_the_source_type_before_admission() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId {
+                binding: crate::implementations::grok_build::task::types::SubagentCancelBinding::Current,
                 id: "queued-resume".to_owned(),
                 actor: SubagentActor::Human,
                 disposition: SubagentCancelDisposition::Stop,
@@ -2430,7 +2431,7 @@ async fn queued_resume_inherits_the_source_type_before_admission() {
     let snapshot = harness
         .backend
         .query("queued-resume", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("cancelled queued resume stays queryable");
     assert_eq!(snapshot.subagent_type, "plan");
     assert!(matches!(
@@ -2476,7 +2477,7 @@ async fn queued_resume_inherits_a_durable_source_type_before_admission() {
     let snapshot = harness
         .backend
         .query("queued-resume", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("queued resume stays queryable");
     assert_eq!(snapshot.subagent_type, "explore");
 
@@ -2487,6 +2488,7 @@ async fn queued_resume_inherits_a_durable_source_type_before_admission() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId {
+                binding: crate::implementations::grok_build::task::types::SubagentCancelBinding::Current,
                 id: "queued-resume".to_owned(),
                 actor: SubagentActor::Human,
                 disposition: SubagentCancelDisposition::Stop,
@@ -2506,7 +2508,7 @@ async fn queued_resume_inherits_a_durable_source_type_before_admission() {
     let snapshot = harness
         .backend
         .query("queued-resume", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("cancelled queued resume stays queryable");
     assert_eq!(snapshot.subagent_type, "explore");
 
@@ -2547,7 +2549,7 @@ async fn resolved_subagent_type_updates_a_queued_record() {
         harness
             .backend
             .query("queued-resume", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .expect("queued spawn")
             .subagent_type,
         "general-purpose"
@@ -2558,7 +2560,7 @@ async fn resolved_subagent_type_updates_a_queued_record() {
         if harness
             .backend
             .query("queued-resume", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_some_and(|snapshot| snapshot.subagent_type == "plan")
         {
             break;
@@ -2568,7 +2570,7 @@ async fn resolved_subagent_type_updates_a_queued_record() {
     let snapshot = harness
         .backend
         .query("queued-resume", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("queued spawn");
     assert_eq!(snapshot.subagent_type, "plan");
 
@@ -2579,6 +2581,7 @@ async fn resolved_subagent_type_updates_a_queued_record() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId {
+                binding: crate::implementations::grok_build::task::types::SubagentCancelBinding::Current,
                 id: "queued-resume".to_owned(),
                 actor: SubagentActor::Human,
                 disposition: SubagentCancelDisposition::Stop,
@@ -2600,7 +2603,7 @@ async fn resolved_subagent_type_updates_a_queued_record() {
     let snapshot = harness
         .backend
         .query("queued-resume", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("cancelled queued spawn stays queryable");
     assert_eq!(snapshot.subagent_type, "plan");
     assert!(matches!(
@@ -2809,7 +2812,7 @@ async fn usage_events_feed_sorted_outstanding_reply() {
         let snapshot = harness
             .backend
             .query(id, true, Some(5_000), None)
-            .await
+            .await.expect("query acknowledgement")
             .unwrap_or_else(|| panic!("{id} never finished"));
         assert!(
             matches!(snapshot.status, SubagentSnapshotStatus::Cancelled { .. }),
@@ -2862,7 +2865,7 @@ async fn cancel_parent_session_kills_prior_turn_background() {
         let snapshot = harness
             .backend
             .query(id, true, Some(5_000), None)
-            .await
+            .await.expect("query acknowledgement")
             .unwrap_or_else(|| panic!("{id} never finished"));
         assert!(
             matches!(snapshot.status, SubagentSnapshotStatus::Cancelled { .. }),
@@ -2963,7 +2966,7 @@ async fn cancel_parent_session_rejects_late_spawn_until_admission_reopens() {
     let prior_snapshot = harness
         .backend
         .query("prior", true, Some(5_000), None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("prior child finishes");
     assert!(matches!(
         prior_snapshot.status,
@@ -3066,7 +3069,7 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
         "reparent must copy workflow lineage"
     );
     // Workflow-owned children answer `inspect` but not `query`.
-    assert!(child_backend.inspect("nested-active").await.is_some());
+    assert!(child_backend.inspect("nested-active").await.expect("coordinator ACK").is_some());
     let _ = harness.start.send(());
     assert_eq!(
         harness.started.recv().await.as_deref(),
@@ -3156,7 +3159,7 @@ async fn loop_tracking_covers_pending_active_and_nested_reparenting() {
     assert!(
         session_backend(&harness, "outer")
             .query("nested", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_some(),
         "the spawner reaches its re-keyed child"
     );
@@ -3257,21 +3260,21 @@ async fn nested_spawner_can_query_inspect_and_cancel_background_grandchild() {
     assert!(
         child_backend
             .query("grandchild", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_some()
     );
-    assert!(child_backend.inspect("grandchild").await.is_some());
+    assert!(child_backend.inspect("grandchild").await.expect("coordinator ACK").is_some());
 
     let _ = harness.start.send(());
     assert_eq!(harness.started.recv().await.as_deref(), Some("grandchild"));
-    let running = child_backend.query("grandchild", false, None, None).await;
+    let running = child_backend.query("grandchild", false, None, None).await.expect("query acknowledgement");
     assert!(matches!(
         running.map(|snapshot| snapshot.status),
         Some(SubagentSnapshotStatus::Running { .. })
     ));
-    assert!(child_backend.inspect("grandchild").await.is_some());
+    assert!(child_backend.inspect("grandchild").await.expect("coordinator ACK").is_some());
     let root = parent_backend(&harness);
-    assert!(root.query("grandchild", false, None, None).await.is_some());
+    assert!(root.query("grandchild", false, None, None).await.expect("query acknowledgement").is_some());
 
     assert!(matches!(
         child_backend
@@ -3280,14 +3283,14 @@ async fn nested_spawner_can_query_inspect_and_cancel_background_grandchild() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::Cancelled { .. }
     ));
     assert!(grandchild.await.unwrap().unwrap().is_interrupted());
     for backend in [&child_backend, &root] {
         let snapshot = backend
             .query("grandchild", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .expect("completed snapshot");
         assert!(matches!(
             snapshot.status,
@@ -3301,7 +3304,7 @@ async fn nested_spawner_can_query_inspect_and_cancel_background_grandchild() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::AlreadyFinished { .. }
     ));
     harness.actor.abort();
@@ -3318,10 +3321,10 @@ async fn foreign_session_cannot_reach_nested_grandchild() {
     assert!(
         foreign
             .query("grandchild", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_none()
     );
-    assert!(foreign.inspect("grandchild").await.is_none());
+    assert!(foreign.inspect("grandchild").await.expect("coordinator ACK").is_none());
     assert!(matches!(
         foreign
             .cancel(
@@ -3329,10 +3332,10 @@ async fn foreign_session_cannot_reach_nested_grandchild() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::NotFound
     ));
-    assert!(foreign.list_running("foreign").await.is_empty());
+    assert!(foreign.list_running("foreign").await.expect("coordinator ACK").is_empty());
     harness.actor.abort();
 }
 
@@ -3357,7 +3360,7 @@ async fn nested_spawner_can_query_and_cancel_queued_grandchild() {
     ));
     await_queued(&harness.backend, 1).await;
 
-    let queued = child_backend.query("grandchild", false, None, None).await;
+    let queued = child_backend.query("grandchild", false, None, None).await.expect("query acknowledgement");
     assert!(matches!(
         queued.map(|snapshot| snapshot.status),
         Some(SubagentSnapshotStatus::Initializing)
@@ -3369,7 +3372,7 @@ async fn nested_spawner_can_query_and_cancel_queued_grandchild() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::Cancelled { .. }
     ));
     assert!(grandchild.await.unwrap().unwrap().is_interrupted());
@@ -3386,6 +3389,7 @@ async fn nested_spawner_lists_grandchild_in_list_running_and_list_active() {
     let from_child: Vec<_> = child_backend
         .list_running("child")
         .await
+        .expect("coordinator ACK")
         .into_iter()
         .map(|inspection| inspection.snapshot.subagent_id)
         .collect();
@@ -3393,6 +3397,7 @@ async fn nested_spawner_lists_grandchild_in_list_running_and_list_active() {
     let mut from_root: Vec<_> = parent_backend(&harness)
         .list_running("parent")
         .await
+        .expect("coordinator ACK")
         .into_iter()
         .map(|inspection| inspection.snapshot.subagent_id)
         .collect();
@@ -3430,12 +3435,12 @@ async fn ancestor_chain_reaches_great_grandchild() {
     for session in ["child", "grandchild", "parent"] {
         let backend = session_backend(&harness, session);
         assert!(
-            backend.query("great", false, None, None).await.is_some(),
+            backend.query("great", false, None, None).await.expect("query acknowledgement").is_some(),
             "{session} must reach its descendant"
         );
     }
     let foreign = session_backend(&harness, "foreign");
-    assert!(foreign.query("great", false, None, None).await.is_none());
+    assert!(foreign.query("great", false, None, None).await.expect("query acknowledgement").is_none());
     harness.actor.abort();
 }
 
@@ -3453,7 +3458,7 @@ async fn nested_spawner_resume_of_grandchild_is_reparented_and_reachable() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::Cancelled { .. }
     ));
     assert!(grandchild.await.unwrap().unwrap().is_interrupted());
@@ -3465,6 +3470,7 @@ async fn nested_spawner_resume_of_grandchild_is_reparented_and_reachable() {
     let inspection = child_backend
         .inspect("g2")
         .await
+        .expect("coordinator ACK")
         .expect("spawner reaches g2");
     assert_eq!(inspection.resumed_from.as_deref(), Some("grandchild"));
     harness.actor.abort();
@@ -3640,7 +3646,7 @@ async fn cancelled_spawner_does_not_receive_grandchild_completion() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::Cancelled { .. }
     ));
 
@@ -3738,7 +3744,7 @@ async fn completion_buffer_caps_summary_without_mutating_result() {
     let snapshot = harness
         .backend
         .query("buffered", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .unwrap();
     let SubagentSnapshotStatus::Completed { output, .. } = snapshot.status else {
         panic!("expected completed snapshot");
@@ -4097,7 +4103,7 @@ async fn blocking_query_of_completed_child_returns_immediately() {
     let snapshot = harness
         .backend
         .query("already-done", true, Some(600_000), None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("completed child");
     assert!(snapshot.status.is_terminal());
     assert!(
@@ -4131,7 +4137,7 @@ async fn blocking_query_of_cancelled_child_returns_immediately() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::Cancelled { .. }
     ));
     assert!(spawn.await.unwrap().unwrap().is_interrupted());
@@ -4141,7 +4147,7 @@ async fn blocking_query_of_cancelled_child_returns_immediately() {
     let snapshot = harness
         .backend
         .query("already-killed", true, Some(600_000), None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("cancelled child");
     assert!(matches!(
         snapshot.status,
@@ -4162,7 +4168,7 @@ async fn blocking_query_of_unknown_id_returns_immediately() {
     let snapshot = harness
         .backend
         .query("never-existed", true, Some(600_000), None)
-        .await;
+        .await.expect("query acknowledgement");
     assert!(snapshot.is_none());
     assert!(
         started.elapsed() < std::time::Duration::from_secs(2),
@@ -4188,8 +4194,8 @@ async fn session_backend_cannot_query_or_cancel_foreign_child() {
             .expect("coordinator sender"),
         "foreign-parent",
     );
-    assert!(foreign.query("scoped", false, None, None).await.is_none());
-    assert!(foreign.inspect("scoped").await.is_none());
+    assert!(foreign.query("scoped", false, None, None).await.expect("query acknowledgement").is_none());
+    assert!(foreign.inspect("scoped").await.expect("coordinator ACK").is_none());
     assert!(matches!(
         foreign
             .cancel(
@@ -4197,7 +4203,7 @@ async fn session_backend_cannot_query_or_cancel_foreign_child() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::NotFound
     ));
 
@@ -4209,13 +4215,13 @@ async fn session_backend_cannot_query_or_cancel_foreign_child() {
                 SubagentActor::Human,
                 SubagentCancelDisposition::Stop
             )
-            .await,
+            .await.expect("cancel acknowledgement"),
         SubagentCancelOutcome::Cancelled { .. }
     ));
     let snapshot = harness
         .backend
         .query("scoped", true, Some(5_000), None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("scoped child finishes");
     assert!(matches!(
         snapshot.status,
@@ -4252,14 +4258,14 @@ async fn completed_cache_evicts_oldest_entry_at_cap() {
         harness
             .backend
             .query("cache-0000", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_none()
     );
     assert!(
         harness
             .backend
             .query("cache-0001", false, None, None)
-            .await
+            .await.expect("query acknowledgement")
             .is_some()
     );
     assert!(
@@ -4271,7 +4277,7 @@ async fn completed_cache_evicts_oldest_entry_at_cap() {
                 None,
                 None
             )
-            .await
+            .await.expect("query acknowledgement")
             .is_some()
     );
     harness.actor.abort();
@@ -4350,7 +4356,7 @@ async fn spawns_past_the_concurrent_limit_queue_until_a_slot_frees() {
             harness
                 .backend
                 .query(&format!("wave-{i}"), false, None, None)
-                .await
+                .await.expect("query acknowledgement")
                 .is_some(),
             "a queued or running spawn must stay queryable"
         );
@@ -4410,7 +4416,7 @@ async fn fail_mode_rejects_at_the_limit_and_recovers_when_a_slot_frees() {
     let snapshot = harness
         .backend
         .query("rejected", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("rejected id resolves");
     assert!(
         matches!(snapshot.status, SubagentSnapshotStatus::Failed { .. }),
@@ -4560,7 +4566,7 @@ async fn teardown_purges_a_queued_spawn_without_rebuffering() {
         let snapshot = harness
             .backend
             .query(id, true, Some(5_000), None)
-            .await
+            .await.expect("query acknowledgement")
             .unwrap_or_else(|| panic!("{id} never finished after teardown"));
         assert!(
             matches!(snapshot.status, SubagentSnapshotStatus::Cancelled { .. }),
@@ -4655,7 +4661,7 @@ async fn a_spawn_cancelled_while_queued_never_starts() {
     let snapshot = harness
         .backend
         .query("queued", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("a spawn cancelled while queued leaves a completed record");
     assert!(
         matches!(snapshot.status, SubagentSnapshotStatus::Cancelled { .. }),
@@ -4895,6 +4901,7 @@ async fn a_cancel_command_by_id_resolves_a_queued_spawn() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId {
+                binding: crate::implementations::grok_build::task::types::SubagentCancelBinding::Current,
                 id: "queued".to_owned(),
                 actor: SubagentActor::Human,
                 disposition: SubagentCancelDisposition::Stop,
@@ -4914,7 +4921,7 @@ async fn a_cancel_command_by_id_resolves_a_queued_spawn() {
     let snapshot = harness
         .backend
         .query("queued", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("cancelled queued id stays queryable");
     assert!(matches!(
         snapshot.status,

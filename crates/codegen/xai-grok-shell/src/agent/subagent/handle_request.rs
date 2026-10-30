@@ -1357,7 +1357,7 @@ pub(crate) async fn run_shell_child(
         );
     }
     completion_data.turn_number = Some(turn_number);
-    let persistence = match session::persistence::new_with_explicit_dir(
+    let (persistence, restart_recovery) = match session::persistence::new_with_explicit_dir_recovery(
         &child_session_info,
         persistence_dir,
         effective_model_id.clone(),
@@ -1389,6 +1389,7 @@ pub(crate) async fn run_shell_child(
                 parent_session_id: Some(ctx.parent_session_id.clone()),
             }
         },
+        &ctx.leader_restart_recovery,
     )
     .await
     {
@@ -1426,6 +1427,7 @@ pub(crate) async fn run_shell_child(
         (*ctx.session_env).clone(),
     )
     .with_hunk_tracking_enabled(ctx.hunk_tracking_enabled);
+    tool_ctx.restart_recovery = restart_recovery;
     tool_ctx.subagent_event_tx = Some(ctx.subagent_event_tx.clone());
     let active_agent_messages_enabled = ctx.active_agent_messages_enabled
         && agent_message_sender.is_some()
@@ -1862,6 +1864,7 @@ pub(crate) async fn run_shell_child(
                         }
                     };
                     let mut runtime_overrides = request.runtime_overrides.clone();
+                    runtime_overrides.child_submission = Default::default();
                     runtime_overrides.model = Some(tracker_model_id.clone());
                     runtime_overrides.reasoning_effort = effective_runtime.reasoning_effort.clone();
                     runtime_overrides.persona = effective_runtime.persona.clone();

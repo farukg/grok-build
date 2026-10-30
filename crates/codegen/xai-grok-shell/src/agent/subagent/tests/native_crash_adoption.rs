@@ -27,6 +27,8 @@ use xai_grok_tools::implementations::grok_build::task::types::{
 mod adoption_attempt_teardown;
 #[path = "native_adoption_explicit_cancel.rs"]
 mod adoption_explicit_cancel;
+#[path = "native_restart_custody.rs"]
+mod native_restart_custody;
 
 const TEXT: &str = "recover-exact-native-admission-921e";
 
@@ -346,7 +348,7 @@ async fn lost_owner_from(
         | ParentInputFault::ShutdownAfterProjection
         | ParentInputFault::ShutdownAfterWakeStart => {
             let restored = bounded(backend.query(&id, true, Some(30_000), None))
-                .await
+                .await.expect("query acknowledgement")
                 .unwrap();
             assert!(matches!(
                 restored.status,
@@ -495,7 +497,7 @@ async fn native_lost_owner_adopts_durable_initial_input_once_with_original_schem
         assert!(matches!(observation, ActiveAgentMessageOutcome::RecoveryObserved { state: MessageRecoveryState::Processing, .. }));
         assert_eq!(f.server.request_count(), sampled + 1);
         resumed.release();
-        let done = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let done = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(done.status, SubagentSnapshotStatus::Completed { output, .. } if output.contains("adopted-native-result")));
         resumed.assert_satisfied();
         let completed = f.storage.load_summary(&f.info).await.unwrap();
@@ -576,7 +578,7 @@ async fn native_unavailable_original_artifact_binding_is_correlated_uncertainty_
         let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
         assert_eq!(bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt)).await,
             ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: f.reference.clone() });
-        let preserved = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let preserved = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(&preserved.status, SubagentSnapshotStatus::Completed { output, tool_calls, turns, worktree_path }
             if output.as_str() == f.prior_result.output.as_ref() && *tool_calls == f.prior_result.tool_calls
                 && *turns == f.prior_result.turns && worktree_path == &f.prior_result.worktree_path));
@@ -628,7 +630,7 @@ async fn native_projected_owner_loss_is_observed_interrupted_and_never_replayed(
             );
             let done =
                 bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None))
-                    .await
+                    .await.expect("query acknowledgement")
                     .unwrap();
             assert!(!matches!(
                 done.status,
@@ -737,7 +739,7 @@ async fn native_human_adoption_retains_source_and_terminal_reopen_is_observation
         assert_eq!(bounded(sender.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt,
             ActiveMessageSenderContext::HumanRoot { session_id: std::sync::Arc::from(f.parent.0.as_ref()) })).await,
             ActiveAgentMessageOutcome::Accepted { message_id: f.reference.message_id.clone() });
-        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(result.status, SubagentSnapshotStatus::Completed { output, .. } if output.contains("human-adopted-result")));
         response.assert_satisfied();
         assert_eq!(f.server.request_count(), sampled + 1);
@@ -780,7 +782,7 @@ async fn native_committed_wake_prefix_is_reconciled_without_double_trace_promoti
         assert_eq!(promoted.next_trace_turn, f.prior_next_turn + 1);
         assert_eq!(f.server.request_count(), sampled + 1);
         response.release();
-        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(result.status, SubagentSnapshotStatus::Completed { output, .. } if output.contains("prefix-adopted-result")));
         response.assert_satisfied();
         assert!(matches!(f.storage.load_summary(&f.info).await.unwrap().completion_delivery.receiver.records[&f.reference.delivery_id].execution, DeliveryExecution::Succeeded));
@@ -811,7 +813,7 @@ async fn native_existing_start_reacquires_results_and_gate_without_republishing_
         assert!(std::iter::from_fn(|| f.gateway.try_recv().ok()).all(|message| !matches!(message,
             xai_acp_lib::AcpClientMessage::ExtNotification(args) if args.request.params.get().contains("subagent_spawned"))));
         response.release();
-        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(result.status, SubagentSnapshotStatus::Completed { output, .. } if output.contains("published-adopted-result")));
         response.assert_satisfied();
         let terminal = f.storage.load_summary(&f.info).await.unwrap();
@@ -841,7 +843,7 @@ async fn native_human_observe_and_adopt_of_tool_uncertainty_keeps_original_agent
         let accepted: serde_json::Value = serde_json::from_str(accepted.0.get()).unwrap();
         assert_eq!(accepted["result"]["kind"], "accepted");
         assert_eq!(accepted["result"]["messageId"], f.reference.message_id);
-        let done = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let done = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(done.status, SubagentSnapshotStatus::Completed { output, .. } if output.contains("agent-source-preserved")));
         response.assert_satisfied();
         assert_eq!(f.server.request_count(), sampled + 1);
@@ -868,7 +870,7 @@ async fn native_changed_management_recipe_is_not_replaced_with_current_defaults(
         let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
         assert_eq!(bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt)).await,
             ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: f.reference.clone() });
-        let preserved = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let preserved = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(preserved.status, SubagentSnapshotStatus::Completed { output, .. } if output.as_str() == f.prior_result.output.as_ref()));
         assert_eq!(sampled, f.server.request_count());
         assert_eq!(std::fs::read(f.directory.join("child_management.json")).unwrap(), changed);

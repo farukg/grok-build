@@ -1507,6 +1507,15 @@ pub trait StorageAdapter: Send + Sync {
         ))
     }
 
+    async fn set_restart_admission(
+        &self,
+        _info: &Info,
+        _admission: xai_grok_tools::types::restart_recovery::RestartAdmission,
+        _access: crate::session::receiver_execution::ReceiverAccess<'_>,
+    ) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable restart admission unsupported"))
+    }
+
     async fn suppress_terminal_completions(
         &self,
         _info: &Info,

@@ -74,7 +74,7 @@ impl RowBadge {
     }
 }
 /// Missing wire timestamps must not become fresh activity on each repaint.
-fn activity_time_from_unix_ms(unix_ms: i64) -> SystemTime {
+pub(super) fn activity_time_from_unix_ms(unix_ms: i64) -> SystemTime {
     u64::try_from(unix_ms)
         .ok()
         .and_then(|millis| {
@@ -190,6 +190,26 @@ pub(crate) fn build_rows_with_roster(
     lane: SessionLane,
     scope: RowScope<'_>,
 ) -> Vec<DashboardRow> {
+    build_rows_with_roster_ordered(
+        agents, pinned, reorder, grouping, filter, home, roster, lane, scope, None,
+    )
+}
+
+pub(crate) fn build_rows_with_roster_ordered(
+    agents: &SessionViews,
+    pinned: &std::collections::BTreeSet<DashboardRowId>,
+    reorder: &[DashboardRowId],
+    grouping: super::state::Grouping,
+    filter: &Filter,
+    home: Option<&str>,
+    roster: &[RosterEntry],
+    lane: SessionLane,
+    scope: RowScope<'_>,
+    running_order: Option<&super::running_order::RunningOrder>,
+) -> Vec<DashboardRow> {
+    if let Some(order) = running_order {
+        order.observe_sources(agents, roster);
+    }
     let mut rows = build_local_rows(agents, pinned, home, lane);
     append_roster_rows(&mut rows, roster, agents, pinned, home, lane);
     if lane == SessionLane::All {
@@ -197,7 +217,7 @@ pub(crate) fn build_rows_with_roster(
     }
     apply_scope(&mut rows, scope);
     apply_filter(&mut rows, filter, home);
-    sort_rows(&mut rows, grouping, reorder);
+    sort_rows_with_running_order(&mut rows, grouping, reorder, running_order, agents);
     rows
 }
 pub(crate) fn workspace_member_is_pinned(member: &xai_grok_dashboard_store::Member) -> bool {
@@ -220,6 +240,7 @@ impl WorkspaceRowInputs<'_> {
 /// `Subagents` delegates to the roster build; `All` composes the store's root rows with the
 /// subagent rows (children first, deduplicated by session id) under one shared sort; `Main`
 /// lists the store's root rows alone.
+#[cfg(test)]
 pub(crate) fn build_rows_with_workspace(
     agents: &SessionViews,
     inputs: WorkspaceRowInputs<'_>,
@@ -232,8 +253,26 @@ pub(crate) fn build_rows_with_workspace(
     child_rows: &std::collections::BTreeMap<String, DashboardRowId>,
     scope: RowScope<'_>,
 ) -> Vec<DashboardRow> {
+    build_rows_with_workspace_ordered(
+        agents, inputs, filter, home, roster, lane, pinned, lane_reorder, child_rows, scope, None,
+    )
+}
+
+pub(crate) fn build_rows_with_workspace_ordered(
+    agents: &SessionViews,
+    inputs: WorkspaceRowInputs<'_>,
+    filter: &Filter,
+    home: Option<&str>,
+    roster: &[RosterEntry],
+    lane: SessionLane,
+    pinned: &std::collections::BTreeSet<DashboardRowId>,
+    lane_reorder: &[DashboardRowId],
+    child_rows: &std::collections::BTreeMap<String, DashboardRowId>,
+    scope: RowScope<'_>,
+    running_order: Option<&super::running_order::RunningOrder>,
+) -> Vec<DashboardRow> {
     if lane == SessionLane::Subagents {
-        return build_rows_with_roster(
+        return build_rows_with_roster_ordered(
             agents,
             pinned,
             lane_reorder,
@@ -243,7 +282,11 @@ pub(crate) fn build_rows_with_workspace(
             roster,
             lane,
             scope,
+            running_order,
         );
+    }
+    if let Some(order) = running_order {
+        order.observe_sources(agents, roster);
     }
     let mut rows = workspace_member_rows(agents, inputs, home, child_rows, roster);
     if lane == SessionLane::All {
@@ -252,7 +295,7 @@ pub(crate) fn build_rows_with_workspace(
     }
     apply_scope(&mut rows, scope);
     apply_filter(&mut rows, filter, home);
-    sort_rows(&mut rows, inputs.grouping(), lane_reorder);
+    sort_rows_with_running_order(&mut rows, inputs.grouping(), lane_reorder, running_order, agents);
     rows
 }
 
@@ -315,7 +358,7 @@ fn workspace_member_rows(
         .collect::<Vec<_>>();
     rows.extend(inputs.provisional.iter().filter_map(|id| {
         let agent = agents.get(id)?;
-        if is_empty_idle_top_level(agent)
+        if is_hidden_empty_top_level(agent)
             || agent
                 .session
                 .session_id
@@ -361,7 +404,7 @@ pub(crate) fn workspace_member_is_visible(
         return true;
     }
     match live_agent {
-        Some(agent) => !is_empty_idle_top_level(agent),
+        Some(agent) => !is_hidden_empty_top_level(agent),
         None => workspace_member_has_content(member),
     }
 }
@@ -451,7 +494,7 @@ fn build_local_rows(
     });
     for (id, agent) in local {
         let top_id = DashboardRowId::TopLevel(id);
-        if is_empty_idle_top_level(agent) && !pinned.contains(&top_id) {
+        if is_hidden_empty_top_level(agent) && !pinned.contains(&top_id) {
             continue;
         }
         rows.push(top_level_row(id, agent, pinned.contains(&top_id), home));
@@ -631,6 +674,9 @@ fn is_empty_top_level(agent: &AgentView) -> bool {
     }
     true
 }
+pub(crate) fn is_hidden_empty_top_level(agent: &AgentView) -> bool {
+    !agent.explicitly_opened && is_empty_idle_top_level(agent)
+}
 pub(crate) fn is_empty_idle_top_level(agent: &AgentView) -> bool {
     is_empty_top_level(agent)
         && !matches!(
@@ -809,10 +855,55 @@ pub fn sort_rows(
     rows.sort_unstable_by(sort_row_key);
 }
 
+fn sort_rows_with_running_order(
+    rows: &mut [DashboardRow],
+    _grouping: super::state::Grouping,
+    _reorder: &[DashboardRowId],
+    running_order: Option<&super::running_order::RunningOrder>,
+    agents: &SessionViews,
+) {
+    let compare = |left: &DashboardRow, right: &DashboardRow| {
+        sort_row_state(left, right).then_with(|| {
+            row_key_with_local_identity(left, agents).cmp(&row_key_with_local_identity(right, agents))
+        })
+    };
+    match running_order {
+        Some(order) => order.sort(rows, compare),
+        None => rows.sort_unstable_by(compare),
+    }
+}
+
+fn row_key_with_local_identity<'a>(row: &'a DashboardRow, agents: &SessionViews) -> RowKey<'a> {
+    let mut key = row_key(row, row.last_change_at);
+    let preserve_local_identity = match &row.id {
+        DashboardRowId::TopLevel(id) => agents.preserves_empty_session_identity(id),
+        DashboardRowId::Roster { .. } | DashboardRowId::Workspace { .. } => false,
+    };
+    // Binding an empty view must not replace its local tie-break.
+    if preserve_local_identity {
+        key.session_id = None;
+    }
+    key
+}
+
 fn sort_row_key(left: &DashboardRow, right: &DashboardRow) -> std::cmp::Ordering {
+    sort_row_key_by_activity(left, right, left.last_change_at, right.last_change_at)
+}
+
+pub(super) fn sort_row_key_by_activity(
+    left: &DashboardRow,
+    right: &DashboardRow,
+    left_activity: SystemTime,
+    right_activity: SystemTime,
+) -> std::cmp::Ordering {
+    sort_row_state(left, right)
+        .then_with(|| row_key(left, left_activity).cmp(&row_key(right, right_activity)))
+}
+
+fn sort_row_state(left: &DashboardRow, right: &DashboardRow) -> std::cmp::Ordering {
     use RowState::{Completed, Failed, Idle, Inactive, NeedsInput, Working};
     use std::cmp::Ordering;
-    let activity = match (left.state, right.state) {
+    match (left.state, right.state) {
         (Working, Working) => Ordering::Equal,
         (Working, NeedsInput | Idle | Inactive | Completed | Failed) => Ordering::Less,
         (NeedsInput | Idle | Inactive | Completed | Failed, Working) => Ordering::Greater,
@@ -820,8 +911,7 @@ fn sort_row_key(left: &DashboardRow, right: &DashboardRow) -> std::cmp::Ordering
             NeedsInput | Idle | Inactive | Completed | Failed,
             NeedsInput | Idle | Inactive | Completed | Failed,
         ) => Ordering::Equal,
-    };
-    activity.then_with(|| row_key(left).cmp(&row_key(right)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -837,12 +927,12 @@ struct RowKey<'a> {
     id: &'a DashboardRowId,
 }
 
-fn row_key(row: &DashboardRow) -> RowKey<'_> {
+fn row_key(row: &DashboardRow, last_change_at: SystemTime) -> RowKey<'_> {
     RowKey {
-        last_change_at: std::cmp::Reverse(if row.last_change_at == SystemTime::UNIX_EPOCH {
+        last_change_at: std::cmp::Reverse(if last_change_at == SystemTime::UNIX_EPOCH {
             ActivityTime::Unknown
         } else {
-            ActivityTime::Known(row.last_change_at)
+            ActivityTime::Known(last_change_at)
         }),
         session_id: row.session_id.as_deref(),
         id: &row.id,

@@ -13,6 +13,8 @@ use crate::app::agent_view::PromptTarget;
 use super::{agent, dispatch};
 pub use helpers::CompactError;
 pub(crate) use helpers::timed_out_while;
+#[cfg(test)]
+pub(in crate::app) use helpers::parse_subagent_kill_outcome;
 pub use session_list::ConversationsPartial;
 pub(super) use helpers::{
     parse_session_load_running_prompt_id, parse_session_memory_mode,
@@ -1494,6 +1496,27 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::CancelWake { request } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                use crate::app::actions::WakeCancelTransport;
+                let result = match serde_json::value::to_raw_value(&request) {
+                    Ok(params) => {
+                        let rpc = acp::ExtRequest::new(
+                            xai_grok_shell::session::CANCEL_SETTLEMENT_METHOD,
+                            params.into(),
+                        );
+                        match acp_send(rpc, &tx).await {
+                            Ok(response) => serde_json::from_str(response.0.get())
+                                .map_err(|_| WakeCancelTransport::InvalidReply),
+                            Err(_) => Err(WakeCancelTransport::Disconnected),
+                        }
+                    }
+                    Err(_) => Err(WakeCancelTransport::Encode),
+                };
+                TaskResult::WakeCancelComplete { request, result }
+            });
+        }
         Effect::CancelTurn {
             session_id,
             cancel_subagents,
@@ -1850,28 +1873,63 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::KillSubagent { session_id, subagent_id, attempt_id } => {
+        Effect::KillSubagent { binding_epoch, session_id, subagent_id, attempt_id } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let params = serde_json::json!({
-                    "sessionId": session_id.0.to_string(),
-                    "subagentId": &subagent_id,
-                });
-                    let req = acp::ExtRequest::new(
-                        "x.ai/subagent/cancel",
-                        serde_json::value::to_raw_value(&params)
-                            .expect("serialize cancel params")
-                            .into(),
-                    );
+                    let params = xai_grok_shell::extensions::task::CancelSubagentRequest {
+                        subagent_id: subagent_id.clone(),
+                        binding: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelBinding::Observed {
+                            attempt_id: attempt_id.clone(),
+                        },
+                        mode: Default::default(),
+                    };
+                    let params = match serde_json::value::to_raw_value(&params) {
+                        Ok(params) => params,
+                        Err(error) => return TaskResult::KillSubagentComplete {
+                            binding_epoch,
+                            session_id, subagent_id, attempt_id,
+                            outcome: SubagentKillOutcome::RpcFailed {
+                                message: format!("Subagent stop not sent: {error}"),
+                            },
+                        },
+                    };
+                    let req = acp::ExtRequest::new("x.ai/subagent/cancel", params.into());
                     let outcome = match acp_send(req, &tx).await {
                         Ok(resp) => parse_subagent_kill_outcome(resp.0.get()),
                         Err(e) => {
                             tracing::warn!("Failed to cancel subagent: {e}");
-                            SubagentKillOutcome::RpcFailed
+                            SubagentKillOutcome::RpcFailed {
+                                message: sanitize_user_error(&e.to_string()),
+                            }
                         }
                     };
+                    let outcome = match outcome {
+                        SubagentKillOutcome::AlreadyFinished { status } => {
+                            let params = serde_json::json!({
+                                "subagentId": &subagent_id,
+                                "block": false,
+                            });
+                            let terminal = match serde_json::value::to_raw_value(&params) {
+                                Ok(params) => acp_send(acp::ExtRequest::new(
+                                    "x.ai/subagent/get", params.into(),
+                                ), &tx).await.ok().and_then(|resp| parse_subagent_terminal(resp.0.get())),
+                                Err(_) => None,
+                            };
+                            match terminal {
+                                Some(terminal) => SubagentKillOutcome::Terminal(terminal),
+                                None => SubagentKillOutcome::AlreadyFinished { status },
+                            }
+                        }
+                        SubagentKillOutcome::StoppedLive
+                        | SubagentKillOutcome::Terminal(_)
+                        | SubagentKillOutcome::NotFound
+                        | SubagentKillOutcome::CustodyUnavailable
+                        | SubagentKillOutcome::Unconfirmed
+                        | SubagentKillOutcome::RpcFailed { .. } => outcome,
+                    };
                     TaskResult::KillSubagentComplete {
+                            binding_epoch,
                         session_id,
                         subagent_id,
                         attempt_id,

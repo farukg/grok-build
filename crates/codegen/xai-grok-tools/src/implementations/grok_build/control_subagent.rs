@@ -29,12 +29,13 @@ impl ControlSubagentOutput {
         match self.outcome {
             SubagentCancelOutcome::Cancelled { .. }
             | SubagentCancelOutcome::AlreadyFinished { .. } => Some(&self.subagent_id),
-            SubagentCancelOutcome::NotFound => None,
+            SubagentCancelOutcome::NotFound
+            | SubagentCancelOutcome::CustodyUnavailable { .. } => None,
         }
     }
 
     pub fn is_error(&self) -> bool {
-        matches!(self.outcome, SubagentCancelOutcome::NotFound)
+        matches!(self.outcome, SubagentCancelOutcome::NotFound | SubagentCancelOutcome::CustodyUnavailable { .. })
     }
 }
 
@@ -43,12 +44,21 @@ impl xai_tool_runtime::ToolOutput for ControlSubagentOutput {}
 impl std::fmt::Display for ControlSubagentOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.outcome {
-            SubagentCancelOutcome::Cancelled { cause } => f.write_str(&cause.model_text()),
+            SubagentCancelOutcome::Cancelled { cause } => {
+                write!(f, "Subagent interruption requested ({cause}); awaiting terminal confirmation.")?;
+                if matches!(cause, super::task::types::InterruptionCause::Paused { .. }) {
+                    f.write_str(" After confirmation, send it a message to resume it.")?;
+                }
+                Ok(())
+            }
             SubagentCancelOutcome::AlreadyFinished { state } => {
                 write!(f, "Subagent had already ended. {}", state.model_text())
             }
             SubagentCancelOutcome::NotFound => {
                 f.write_str("Subagent not found or not owned by this session.")
+            }
+            SubagentCancelOutcome::CustodyUnavailable { target_id } => {
+                write!(f, "Stop not confirmed for subagent '{target_id}': execution custody is unavailable.")
             }
         }
     }
@@ -133,7 +143,8 @@ impl xai_tool_runtime::Tool for ControlSubagentTool {
                 SubagentActor::model_tool(owner),
                 input.action,
             )
-            .await;
+            .await
+            .map_err(|error| xai_tool_runtime::ToolError::custom("coordinator_unavailable", error.to_string()))?;
         Ok(ControlSubagentOutput {
             subagent_id: input.subagent_id,
             outcome,

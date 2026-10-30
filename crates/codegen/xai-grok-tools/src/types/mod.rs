@@ -15,6 +15,7 @@ pub mod params_validation;
 pub mod process_manager;
 pub mod requirements;
 pub mod restart_stop_age;
+pub mod restart_recovery;
 pub mod resources;
 pub mod schema;
 pub mod session_mode;

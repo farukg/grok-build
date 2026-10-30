@@ -71,6 +71,7 @@ pub struct ActiveAgentMessageRequest {
     target: ActiveMessageTarget,
     text: Arc<str>,
     operation: ActiveAgentMessageOperation,
+    pub(crate) child_submission: super::coordinator::child_submission::ChildSubmission,
 }
 
 impl ActiveAgentMessageRequest {
@@ -130,6 +131,7 @@ impl ActiveAgentMessageRequest {
             target,
             text,
             operation,
+            child_submission: Default::default(),
         })
     }
 
@@ -143,7 +145,13 @@ impl ActiveAgentMessageRequest {
             target: ActiveMessageTarget::ChildId(String::new()),
             text: Arc::from(""),
             operation: ActiveAgentMessageOperation::Queue,
+            child_submission: Default::default(),
         }
+    }
+
+    pub fn with_child_submission(mut self, authority: super::coordinator::child_submission::ChildSubmissionAuthority) -> Self {
+        self.child_submission = super::coordinator::child_submission::ChildSubmission::New(authority);
+        self
     }
 
     pub fn target(&self) -> &ActiveMessageTarget {

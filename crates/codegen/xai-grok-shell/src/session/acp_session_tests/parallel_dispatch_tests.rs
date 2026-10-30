@@ -49,8 +49,8 @@ impl SubagentBackend for FixedActiveMessageBackend {
         _: bool,
         _: Option<u64>,
         _: Option<xai_grok_tools::types::completion_observation::SubagentCompletionObservations>,
-    ) -> Option<SubagentSnapshot> {
-        None
+    ) -> Result<Option<SubagentSnapshot>, xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError> {
+        Ok(None)
     }
 
     async fn send_active_message(&self, _: ActiveAgentMessageRequest) -> ActiveAgentMessageOutcome {
@@ -62,14 +62,14 @@ impl SubagentBackend for FixedActiveMessageBackend {
         _: &str,
         _: SubagentActor,
         _: SubagentCancelDisposition,
-    ) -> SubagentCancelOutcome {
-        SubagentCancelOutcome::NotFound
+    ) -> Result<SubagentCancelOutcome, xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError> {
+        Ok(SubagentCancelOutcome::NotFound)
     }
 
     async fn list_owned(
         &self,
-    ) -> Vec<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection> {
-        Vec::new()
+    ) -> Result<Vec<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection>, xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError> {
+        Ok(Vec::new())
     }
 
     async fn validate_type(&self, _: &str, _: &str) -> SubagentValidateTypeOutcome {

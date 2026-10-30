@@ -135,6 +135,13 @@ impl MvpAgent {
                 session_id: parent_session_id.to_owned(),
             });
         }
+        if !self.cfg.borrow().leader_restart_recovery.session(parent_session_id)
+            .admission().permits_recovery()
+        {
+            return Err(SubagentResumeError::SpawnRejected {
+                reason: "session awaits a newly submitted user message after stale restart".into(),
+            });
+        }
         let backend =
             xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::for_coordinator_session(
                 self.subagent_event_tx.clone(),
@@ -161,6 +168,56 @@ impl MvpAgent {
             Ok(Ok(result)) => result
                 .error()
                 .unwrap_or_else(|| "the coordinator did not register the spawn".to_owned()),
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+        };
+        Err(SubagentResumeError::SpawnRejected { reason })
+    }
+    pub(super) async fn resume_subagent_submission(
+        &self,
+        parent_session_id: &str,
+        child: &str,
+        prompt: String,
+        authority: xai_grok_tools::implementations::grok_build::task::coordinator::child_submission::ChildSubmissionAuthority,
+    ) -> Result<
+        xai_grok_tools::implementations::grok_build::task::resume::SubagentResumeRoute,
+        xai_grok_tools::implementations::grok_build::task::resume::SubagentResumeError,
+    > {
+        use xai_grok_tools::implementations::grok_build::task::{
+            backend::{ChannelBackend, SubagentBackend},
+            coordinator::child_submission::ChildSubmission,
+            resume::{SubagentResumeError, SubagentResumeRoute, human_resume_request},
+            types::{SubagentResumeTarget, SubagentActor, SubagentCancelDisposition},
+        };
+        if self.session_handle_waiting_for_load(&acp::SessionId::new(parent_session_id)).await.is_none() {
+            return Err(SubagentResumeError::ParentSessionUnavailable { session_id: parent_session_id.to_owned() });
+        }
+        let backend = ChannelBackend::for_coordinator_session(self.subagent_event_tx.clone(), parent_session_id);
+        match backend.resolve_resume(child, parent_session_id).await? {
+            SubagentResumeTarget::Finished { subagent_id } if subagent_id == child => {},
+            SubagentResumeTarget::Running { subagent_id } => return Err(SubagentResumeError::StillRunning { subagent_id }),
+            SubagentResumeTarget::Finished { .. } => return Err(SubagentResumeError::NotFound { reference: child.to_owned() }),
+        }
+        let mut request = human_resume_request(child.to_owned(), prompt, parent_session_id.to_owned());
+        request.runtime_overrides.child_submission = ChildSubmission::New(authority);
+        let continuation = request.id.clone();
+        let cancellation = request.cancel_token.clone();
+        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
+        let spawn_backend = backend.clone();
+        let spawn = tokio::spawn(async move { spawn_backend.spawn(request, Some(registered_tx), None).await });
+        match tokio::time::timeout(std::time::Duration::from_secs(30), registered_rx).await {
+            Ok(Ok(())) => return Ok(SubagentResumeRoute::Spawn { source_id: child.to_owned() }),
+            Ok(Err(_)) => {},
+            Err(_) => {
+                cancellation.cancel();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5),
+                    backend.cancel(&continuation, SubagentActor::Human, SubagentCancelDisposition::Stop)).await;
+                spawn.abort();
+                return Err(SubagentResumeError::SpawnRejected { reason: "child submission registration timed out".into() });
+            }
+        }
+        let reason = match spawn.await {
+            Ok(Ok(result)) => result.error().unwrap_or_else(|| "the coordinator did not register the spawn".to_owned()),
             Ok(Err(error)) => error.to_string(),
             Err(error) => error.to_string(),
         };
@@ -306,6 +363,7 @@ impl MvpAgent {
             .and_then(|ps| ps.resolved_tool_overrides.load_full().map(|o| (*o).clone()));
         let memory_config = self.memory_config_snapshot();
         let mut ctx = crate::agent::subagent::SubagentSpawnContext {
+            leader_restart_recovery: self.cfg.borrow().leader_restart_recovery.clone(),
             lsp: parent_lsp,
             process_scope: parent_process_scope,
             client_hooks: Default::default(),

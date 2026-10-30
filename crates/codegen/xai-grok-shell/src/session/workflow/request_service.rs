@@ -14,6 +14,7 @@ use super::manager::{ControlError, LaunchSpec, WorkflowManager};
 use super::registry;
 
 pub(crate) struct RequestServiceOptions {
+    pub(crate) restart_recovery: xai_grok_tools::types::restart_recovery::SessionRestartRecovery,
     pub(crate) manager: Arc<tokio::sync::Mutex<WorkflowManager>>,
     pub(crate) cwd: PathBuf,
     pub(crate) session_dir: PathBuf,
@@ -26,6 +27,7 @@ pub(crate) fn spawn_request_service(
     options: RequestServiceOptions,
 ) {
     let RequestServiceOptions {
+        restart_recovery,
         manager,
         cwd,
         session_dir,
@@ -47,6 +49,14 @@ pub(crate) fn spawn_request_service(
                 let _ = ack.send(WorkflowLaunchAck::Rejected {
                     code: "workflow_invalid_input",
                     detail,
+                });
+                continue;
+            }
+            if !restart_recovery.admission().permits_recovery()
+                && !matches!(&input.source, WorkflowSource::Pause { .. } | WorkflowSource::Stop { .. }) {
+                let _ = ack.send(WorkflowLaunchAck::Rejected {
+                    code: "workflow_restart_quiescent",
+                    detail: "Send a new message before launching or resuming a workflow after stale restart.".into(),
                 });
                 continue;
             }

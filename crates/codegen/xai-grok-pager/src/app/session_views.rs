@@ -22,6 +22,12 @@ impl SessionViews {
     pub fn get(&self, id: &AgentId) -> Option<&AgentView> {
         self.views.get(id).inspect(|view| view.scrollback.bind_selection_source(id.0, view.session_binding_epoch))
     }
+    pub(crate) fn preserves_empty_session_identity(&self, id: &AgentId) -> bool {
+        self.views.get(id).is_some_and(|view| {
+            view.explicitly_opened
+                && crate::views::dashboard::row::is_empty_idle_top_level(view)
+        })
+    }
     pub fn get_mut(&mut self, id: &AgentId) -> Option<&mut AgentView> {
         self.views.get_mut(id).inspect(|view| view.scrollback.bind_selection_source(id.0, view.session_binding_epoch))
     }

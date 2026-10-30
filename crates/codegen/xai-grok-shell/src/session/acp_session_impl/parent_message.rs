@@ -425,6 +425,10 @@ impl SessionActor {
         respond_to: oneshot::Sender<ActiveMessageAdmission>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
     ) {
+        if !self.restart_recovery_permitted() {
+            let _ = respond_to.send(ActiveMessageAdmission::Rejected);
+            return;
+        }
         let (turn_result_tx, handoff) = match receipt_sink {
             ParentMessageHandoff::Live(sink) => {
                 let permit = match sink.reserve_owned().await {

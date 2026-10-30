@@ -1448,6 +1448,7 @@ pub struct AgentView {
     pub session_agent_name: Option<String>,
     pub subagent_sessions: HashMap<String, SubagentInfo>,
     pub(crate) role: AgentRole,
+    pub(crate) explicitly_opened: bool,
     /// Whether the `/share` slash command is available (mirrors
     /// `AppView::sharing_enabled`). Used to gate palette entries.
     pub sharing_enabled: bool,

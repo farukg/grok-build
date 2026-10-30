@@ -43,6 +43,9 @@ impl SessionActor {
         name: &str,
         input: &str,
     ) -> String {
+        if !self.restart_recovery_permitted() {
+            return "Send a new message before launching a workflow after stale restart.".into();
+        }
         let resolved = match registry.resolve_by_name(name) {
             Ok(r) => r,
             Err(e) => return format!("Workflow '{name}' unavailable: {e}"),
@@ -199,6 +202,9 @@ impl SessionActor {
                 }
             }
             ManageOp::Resume => {
+                if !self.restart_recovery_permitted() {
+                    return "Send a new message before resuming a workflow after stale restart.".into();
+                }
                 if status == WorkflowRunStatus::Active {
                     return format!("Run '{name}' is already running.");
                 }

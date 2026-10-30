@@ -160,6 +160,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
     app.invalidate_session_cycle();
     app.dispatch_depth = app.dispatch_depth.saturating_add(1);
     let effects = dispatch_inner(action, app);
+    crate::views::dashboard::running_order::observe_app(app);
     app.dispatch_depth = app.dispatch_depth.saturating_sub(1);
     if app.dispatch_depth == 0 {
         flush_image_notices(app);

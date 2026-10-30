@@ -188,3 +188,6 @@ async fn actual_workflow_manager_holds_outcome_and_wake_until_manifest_enrollmen
         drop(persistence_task);
     }
 }
+
+#[path = "restart_cancellation_tests.rs"]
+mod restart_cancellation;

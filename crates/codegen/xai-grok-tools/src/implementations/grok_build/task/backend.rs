@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
     ChildCancellation, HandedOffForegroundSubagent, SpawnedSubagentRef,
-    SubagentActiveMessageRequest, SubagentActor, SubagentCancelDisposition, SubagentCancelOutcome,
+    SubagentAccessError, SubagentActiveMessageRequest, SubagentActor, SubagentCancelDisposition, SubagentCancelOutcome,
     SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome, SubagentDescribeRequest,
     SubagentEvent, SubagentEventSender, SubagentHandOffForegroundRequest, SubagentInspectRequest,
     SubagentInspection, SubagentListRunningRequest, SubagentQueryRequest, SubagentRegistryCounts,
@@ -49,7 +49,7 @@ pub trait SubagentBackend: Send + Sync + 'static {
         block: bool,
         timeout_ms: Option<u64>,
         observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
-    ) -> Option<SubagentSnapshot>;
+    ) -> Result<Option<SubagentSnapshot>, SubagentAccessError>;
 
     /// Admit one bounded message to an owned active descendant.
     ///
@@ -84,10 +84,10 @@ pub trait SubagentBackend: Send + Sync + 'static {
         id: &str,
         actor: SubagentActor,
         disposition: SubagentCancelDisposition,
-    ) -> SubagentCancelOutcome;
+    ) -> Result<SubagentCancelOutcome, super::types::SubagentAccessError>;
 
     /// Every subagent this session can reach: queued, starting, running and retained finished ones.
-    async fn list_owned(&self) -> Vec<SubagentInspection>;
+    async fn list_owned(&self) -> Result<Vec<SubagentInspection>, super::types::SubagentAccessError>;
 
     /// Validate a subagent type synchronously before spawning.
     /// Returns `CoordinatorGone` on channel close and `ValidationUnavailable`
@@ -265,6 +265,25 @@ pub struct ChannelBackend {
 }
 
 impl ChannelBackend {
+    pub async fn cancel_with_binding(
+        &self,
+        id: &str,
+        actor: SubagentActor,
+        disposition: SubagentCancelDisposition,
+        binding: super::types::SubagentCancelBinding,
+    ) -> Result<SubagentCancelOutcome, super::types::SubagentAccessError> {
+        use super::types::SubagentAccessError;
+        let (respond_to, response_rx) = oneshot::channel();
+        self.tx.event_sender().send(SubagentEvent::Cancel(SubagentCancelRequest {
+            parent_session_id: self.parent_session_id(),
+            target: SubagentCancelTarget::SubagentId {
+                id: id.to_owned(), binding, actor, disposition,
+            },
+            respond_to,
+        })).map_err(|_| SubagentAccessError::CoordinatorUnavailable)?;
+        response_rx.await.map_err(|_| SubagentAccessError::CoordinatorUnavailable)
+    }
+
     pub fn new(tx: mpsc::UnboundedSender<SubagentEvent>) -> Self {
         Self {
             tx: ChannelBackendSender::Legacy(SubagentEventSender(tx)),
@@ -431,7 +450,7 @@ impl ChannelBackend {
         }
     }
 
-    pub async fn inspect(&self, id: &str) -> Option<SubagentInspection> {
+    pub async fn inspect(&self, id: &str) -> Result<Option<SubagentInspection>, super::types::SubagentAccessError> {
         let (respond_to, response_rx) = oneshot::channel();
         self.tx
             .event_sender()
@@ -440,23 +459,19 @@ impl ChannelBackend {
                 parent_session_id: self.parent_session_id(),
                 respond_to,
             }))
-            .ok()?;
-        response_rx.await.ok().flatten()
+            .map_err(|_| super::types::SubagentAccessError::CoordinatorUnavailable)?;
+        response_rx.await.map_err(|_| super::types::SubagentAccessError::CoordinatorUnavailable)
     }
 
-    pub async fn list_running(&self, parent_session_id: &str) -> Vec<SubagentInspection> {
+    pub async fn list_running(&self, parent_session_id: &str) -> Result<Vec<SubagentInspection>, super::types::SubagentAccessError> {
         let (respond_to, response_rx) = oneshot::channel();
-        if self
-            .tx
+        self.tx
             .send(SubagentEvent::ListRunning(SubagentListRunningRequest {
                 parent_session_id: parent_session_id.to_owned(),
                 respond_to,
             }))
-            .is_err()
-        {
-            return Vec::new();
-        }
-        response_rx.await.unwrap_or_default()
+            .map_err(|_| super::types::SubagentAccessError::CoordinatorUnavailable)?;
+        response_rx.await.map_err(|_| super::types::SubagentAccessError::CoordinatorUnavailable)
     }
 
     pub async fn spawned_refs_for_prompt(
@@ -602,23 +617,28 @@ impl SubagentBackend for ChannelBackend {
         block: bool,
         timeout_ms: Option<u64>,
         observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
-    ) -> Option<SubagentSnapshot> {
+    ) -> Result<Option<SubagentSnapshot>, SubagentAccessError> {
+        let pending_observations = observations.as_ref().map(|_| {
+            crate::types::completion_observation::SubagentCompletionObservations::default()
+        });
         let (respond_to, response_rx) = oneshot::channel();
         let sent = self
             .tx
             .event_sender()
             .send(SubagentEvent::Query(SubagentQueryRequest {
-                observations,
+                observations: pending_observations.clone(),
                 subagent_id: id.to_string(),
                 parent_session_id: self.parent_session_id(),
                 block,
                 timeout_ms,
                 respond_to,
             }));
-        if sent.is_err() {
-            return None;
+        sent.map_err(|_| SubagentAccessError::CoordinatorUnavailable)?;
+        let snapshot = response_rx.await.map_err(|_| SubagentAccessError::CoordinatorUnavailable)?;
+        if let (Some(observer), Some(pending)) = (observations, pending_observations) {
+            observer.extend(pending.snapshot());
         }
-        response_rx.await.ok().flatten()
+        Ok(snapshot)
     }
 
     async fn recover_message(
@@ -723,27 +743,11 @@ impl SubagentBackend for ChannelBackend {
         id: &str,
         actor: SubagentActor,
         disposition: SubagentCancelDisposition,
-    ) -> SubagentCancelOutcome {
-        let (respond_to, response_rx) = oneshot::channel();
-        let sent = self
-            .tx
-            .event_sender()
-            .send(SubagentEvent::Cancel(SubagentCancelRequest {
-                parent_session_id: self.parent_session_id(),
-                target: SubagentCancelTarget::SubagentId {
-                    id: id.to_string(),
-                    actor,
-                    disposition,
-                },
-                respond_to,
-            }));
-        if sent.is_err() {
-            return SubagentCancelOutcome::NotFound;
-        }
-        response_rx.await.unwrap_or(SubagentCancelOutcome::NotFound)
+    ) -> Result<SubagentCancelOutcome, super::types::SubagentAccessError> {
+        self.cancel_with_binding(id, actor, disposition, super::types::SubagentCancelBinding::Current).await
     }
 
-    async fn list_owned(&self) -> Vec<SubagentInspection> {
+    async fn list_owned(&self) -> Result<Vec<SubagentInspection>, super::types::SubagentAccessError> {
         let (respond_to, response_rx) = oneshot::channel();
         let sent = self.tx.send(SubagentEvent::ListOwned(
             super::types::SubagentListOwnedRequest {
@@ -751,10 +755,8 @@ impl SubagentBackend for ChannelBackend {
                 respond_to,
             },
         ));
-        if sent.is_err() {
-            return Vec::new();
-        }
-        response_rx.await.unwrap_or_default()
+        sent.map_err(|_| super::types::SubagentAccessError::CoordinatorUnavailable)?;
+        response_rx.await.map_err(|_| super::types::SubagentAccessError::CoordinatorUnavailable)
     }
 
     async fn validate_type(

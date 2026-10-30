@@ -1425,6 +1425,10 @@ impl AgentView {
                     self.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::CtrlC);
                     return InputOutcome::Action(Action::CancelTurn);
                 }
+                if self.wake_turn_cancelling() {
+                    self.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::CtrlC);
+                    return InputOutcome::Action(Action::CancelTurn);
+                }
                 if self.any_cancel_pending() {
                     return InputOutcome::Action(Action::Quit);
                 }

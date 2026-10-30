@@ -124,7 +124,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let mut cancelled = Vec::new();
         let mut kept = VecDeque::new();
         for queued in std::mem::take(&mut self.queued.entries) {
-            if queued.request.cancel_token.is_cancelled() {
+            if queued.request.cancel_token.is_cancelled()
+                || queued.request.runtime_overrides.child_submission.is_revoked()
+            {
                 cancelled.push(queued);
                 continue;
             }

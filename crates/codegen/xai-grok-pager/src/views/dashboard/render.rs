@@ -8,7 +8,10 @@ use unicode_width::UnicodeWidthStr;
 use super::animation::{Animation, NEEDS_INPUT_BLINK_DIVISOR, PaintedAnimations, SPINNER_DIVISOR};
 pub use super::chrome::HeaderUpgradeCta;
 use super::layout::MIN_DASHBOARD_WIDTH;
-use super::row::{DashboardRow, build_rows_with_roster, build_rows_with_workspace};
+use super::row::{
+    DashboardRow, build_rows_with_roster_ordered as build_rows_with_roster,
+    build_rows_with_workspace_ordered as build_rows_with_workspace,
+};
 use super::state::{
     DashboardRowId, DashboardState, DashboardStopAction, Filter, Focusable, Grouping,
     LocationPickerState, RenameDraft, RowState, SectionKey,
@@ -102,6 +105,7 @@ pub(crate) fn render_dashboard(
                 value: state.session_scope,
                 cwd: state.cwd.as_path(),
             },
+            Some(&state.running_order),
         )
     } else {
         build_rows_with_roster(
@@ -117,6 +121,7 @@ pub(crate) fn render_dashboard(
                 value: state.session_scope,
                 cwd: state.cwd.as_path(),
             },
+            Some(&state.running_order),
         )
     };
     state.painted_animations = PaintedAnimations::default();

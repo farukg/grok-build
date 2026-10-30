@@ -425,6 +425,7 @@ pub(super) fn handle_sessions_changed(notif: &acp::ExtNotification, app: &mut Ap
     }
     for sid in changed.removed {
         app.remove_roster_entry(&sid);
+        crate::views::dashboard::running_order::remove_session(app, &sid);
         affected = true;
     }
     if affected {

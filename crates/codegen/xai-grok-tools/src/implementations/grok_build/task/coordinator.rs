@@ -11,6 +11,7 @@
 
 pub(crate) mod active_message;
 mod agent_quotas;
+pub mod child_submission;
 mod agent_targets;
 mod completion;
 mod graph;
@@ -51,6 +52,7 @@ use super::types::{
 pub use active_message::ActiveChildGeneration;
 use active_message::{ActiveMessageFuture, ActiveMessageLifecycle, SpawnReadyMessages};
 use agent_quotas::AgentMessageQuotas;
+use child_submission::SpawnBlock;
 use graph::SpawnGraph;
 use root_targets::{RootTargetKey, RootTargetLifecycle};
 
@@ -104,10 +106,11 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     /// to finish. While an entry exists, spawn admission stays closed and [`SubagentEvent::OpenSpawnAdmission`] cannot reopen it (a racing
     /// next-turn open would reopen Task spawns mid-delete).
     teardown_drains: HashMap<String, TeardownDrain>,
-    /// Parent sessions that received `ParentSession` cancel. Non-workflow spawns are rejected until
+    /// Parent sessions that received `ParentSession` cancel. Ordinary non-workflow spawns are rejected until
     /// [`SubagentEvent::OpenSpawnAdmission`] (next turn) or teardown drain completes, so a detached
     /// late `TaskTool` spawn cannot outrun Stop / delete.
-    spawn_blocked_sessions: HashSet<String>,
+    spawn_blocked_sessions: HashMap<String, SpawnBlock>,
+    child_submissions: child_submission::ChildSubmissions,
     usage_not_applied_prompts: HashSet<PromptScope>,
     pending_completions: Vec<BufferedCompletion>,
     runs: FuturesUnordered<
@@ -298,7 +301,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             drain_waiters: HashMap::new(),
             workflow_cancel_waiters: HashMap::new(),
             teardown_drains: HashMap::new(),
-            spawn_blocked_sessions: HashSet::new(),
+            spawn_blocked_sessions: HashMap::new(),
+            child_submissions: Default::default(),
             usage_not_applied_prompts: HashSet::new(),
             pending_completions: Vec::new(),
             runs: FuturesUnordered::new(),
@@ -429,9 +433,25 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             SubagentEvent::Cancel(request) => match request.target {
                 SubagentCancelTarget::SubagentId {
                     id,
+                    binding,
                     actor,
                     disposition,
                 } => {
+                    let matches = match binding {
+                        super::types::SubagentCancelBinding::Current => true,
+                        super::types::SubagentCancelBinding::Observed { attempt_id } => {
+                            let current = self.active.get(&id).map(|child| &child.attempt_id)
+                                .or_else(|| self.pending.get(&id).map(|child| &child.attempt_id))
+                                .or_else(|| self.completed.get(&id).map(|child| &child.attempt_id));
+                            current.is_some_and(|current| Some(current.as_str()) == attempt_id.as_deref())
+                        }
+                    };
+                    if !matches && self.is_reachable_from_session(&id, request.parent_session_id.as_deref()) {
+                        let _ = request.respond_to.send(SubagentCancelOutcome::CustodyUnavailable {
+                            target_id: id,
+                        });
+                        return;
+                    }
                     let cause = match disposition {
                         SubagentCancelDisposition::Stop => {
                             InterruptionCause::ExplicitStop { actor }
@@ -541,6 +561,14 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         let _ = respond_to.send(());
                     }
                 }
+            }
+            SubagentEvent::ReserveChildSubmission { parent_session_id, child_session_id, prompt, respond_to } => {
+                let result = self.reserve_child_submission(parent_session_id, child_session_id, prompt);
+                let _ = respond_to.send(result);
+            }
+            SubagentEvent::QuiesceRestartChildren { parent_session_id, respond_to } => {
+                let result = self.quiesce_restart_children(&parent_session_id);
+                let _ = respond_to.send(result);
             }
             SubagentEvent::OpenSpawnAdmission { parent_session_id } => {
                 // Next-turn reopen after Stop is intentional even while cancelled
@@ -951,7 +979,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         let is_blocked = self.completed.get(&subagent_id).is_some_and(|completed| {
             let parent_session_id = &completed.request.parent_session_id;
-            self.spawn_blocked_sessions.contains(parent_session_id)
+            self.spawn_blocked_sessions.get(parent_session_id).is_some_and(|block| block.blocks_child_submission())
                 || self.teardown_drains.contains_key(parent_session_id)
         });
         if is_blocked {
@@ -1747,12 +1775,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         cause: InterruptionCause,
     ) -> SubagentCancelOutcome {
         if !self.is_reachable_from_session(id, parent_session_id) {
+            if let Some(parent) = parent_session_id {
+                self.revoke_unregistered_submission(parent, id);
+            }
             return SubagentCancelOutcome::NotFound;
         }
+        self.revoke_child_submissions(id);
         if let Some(child) = self.active.get_mut(id) {
             match child.control.cancel(ChildCancellation::Authorized) {
                 ChildCancelOutcome::Accepted => {}
-                ChildCancelOutcome::AttemptEnded => return SubagentCancelOutcome::NotFound,
+                ChildCancelOutcome::AttemptEnded => return SubagentCancelOutcome::CustodyUnavailable {
+                    target_id: id.to_owned(),
+                },
             }
             child.disposition.interrupt(cause.clone());
             child.cancellation.cancel();
@@ -1877,6 +1911,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     }
 
     fn teardown_session_children(&mut self, parent_session_id: &str) {
+        self.revoke_parent_submissions(parent_session_id);
         let cause = InterruptionCause::SessionTeardown {
             session_id: parent_session_id.to_owned(),
         };
@@ -1966,7 +2001,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     fn begin_teardown_drain(&mut self, parent_session_id: String, respond_to: oneshot::Sender<()>) {
         let deadline = tokio::time::Instant::now() + TEARDOWN_DRAIN_MAX;
         self.spawn_blocked_sessions
-            .insert(parent_session_id.clone());
+            .insert(parent_session_id.clone(), SpawnBlock::Stopped);
         self.teardown_drains
             .entry(parent_session_id)
             .or_insert_with(|| TeardownDrain {
@@ -2011,8 +2046,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let Some(parent_session_id) = parent_session_id else {
             return SubagentCancelOutcome::NotFound;
         };
+        self.revoke_parent_submissions(parent_session_id);
         self.spawn_blocked_sessions
-            .insert(parent_session_id.to_owned());
+            .insert(parent_session_id.to_owned(), SpawnBlock::Stopped);
         let cause = InterruptionCause::SessionStopped {
             session_id: parent_session_id.to_owned(),
         };
@@ -2367,3 +2403,10 @@ pub(super) mod tests;
 #[cfg(test)]
 #[path = "coordinator/wake_tests.rs"]
 mod wake_tests;
+#[cfg(test)]
+#[path = "coordinator/cancel_f3_tests.rs"]
+mod cancel_f3_tests;
+
+#[cfg(test)]
+#[path = "coordinator/child_submission_tests.rs"]
+mod child_submission_tests;

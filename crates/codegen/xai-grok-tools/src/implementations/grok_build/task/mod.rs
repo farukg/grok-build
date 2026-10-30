@@ -29,6 +29,7 @@ pub use model_policy::TaskParams;
 pub mod resume;
 pub mod root_control;
 pub mod types;
+pub mod terminal;
 
 use self::backend::SubagentBackendResource;
 use self::types::CurrentPromptIdResource;
@@ -674,6 +675,7 @@ impl xai_tool_runtime::Tool for TaskTool {
                 output_token_budget: None,
                 output_schema: None,
                 loop_task_id: None,
+                child_submission: Default::default(),
             },
             run_in_background: input.run_in_background,
             // Model-spawned subagents must still appear in the idle reminder.

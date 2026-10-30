@@ -2,6 +2,10 @@ use crate::implementations::grok_build::task::backend::SubagentBackendResource;
 use crate::implementations::grok_build::task::types::{SubagentInspection, SubagentState};
 use crate::types::tool::{ToolKind, ToolNamespace};
 
+#[cfg(test)]
+#[path = "list_subagents_tests.rs"]
+mod tests;
+
 pub const LIST_SUBAGENTS_TOOL_NAME: &str = "list_subagents";
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -122,6 +126,7 @@ impl xai_tool_runtime::Tool for ListSubagentsTool {
             .backend()
             .list_owned()
             .await
+            .map_err(|error| xai_tool_runtime::ToolError::custom("coordinator_unavailable", error.to_string()))?
             .into_iter()
             .map(ListedSubagent::from)
             .collect();

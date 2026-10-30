@@ -237,7 +237,7 @@ async fn assert_wake_setup_failure_preserves_prior_durable_state(
     );
     let restored = backend
         .query(&id, false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("restored prior snapshot");
     assert!(matches!(
         restored.status,
@@ -472,7 +472,7 @@ async fn live_steers_through_shell_runtime(with_active_tool: bool) {
         for marker in ["live-order-first", "live-order-second", first_event, second_event] {
             assert_eq!(updates.matches(marker).count(), 1, "one durable child projection for {marker}");
         }
-        let snapshot = backend.query(&id, false, None, None).await.expect("terminal snapshot");
+        let snapshot = backend.query(&id, false, None, None).await.expect("query acknowledgement").expect("terminal snapshot");
         assert!(matches!(snapshot.status, SubagentSnapshotStatus::Completed { .. }));
         coordinator.abort();
         usage_ack.abort();
@@ -614,7 +614,7 @@ async fn unpublished_wake_completion_preserves_prior_durable_state_and_worktree(
             ));
             let restored = backend
                 .query(&id, false, None, None)
-                .await
+                .await.expect("query acknowledgement")
                 .expect("restored prior snapshot");
             assert!(matches!(
                 restored.status,
@@ -974,7 +974,7 @@ async fn unacked_wake_start_and_abort_fail_closed_without_parking_runner() {
             assert_eq!(server.request_count(), prior_requests);
             let restored = backend
                 .query(&id, true, Some(5_000), None)
-                .await
+                .await.expect("query acknowledgement")
                 .expect("restored prior snapshot");
             assert!(matches!(
                 restored.status,
@@ -1109,7 +1109,7 @@ async fn rejected_deferred_start_restores_prior_without_publication() {
             assert_eq!(server.request_count(), prior_requests);
             let restored = backend
                 .query(&id, true, Some(5_000), None)
-                .await
+                .await.expect("query acknowledgement")
                 .expect("restored prior completion");
             assert!(
                 matches!(restored.status, SubagentSnapshotStatus::Completed { .. }),
@@ -1236,7 +1236,7 @@ async fn started_wake_with_failed_metadata_write_preserves_prior_durable_artifac
             ));
             let wake = backend
                 .query(&id, true, Some(5_000), None)
-                .await
+                .await.expect("query acknowledgement")
                 .expect("wake completion");
             assert!(matches!(
                 wake.status,

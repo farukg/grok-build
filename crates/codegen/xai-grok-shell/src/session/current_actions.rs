@@ -625,9 +625,12 @@ enum TurnObservation {
     Settled(FrozenOwner),
 }
 
+pub(crate) const REMOVED_WAKE_RECEIPT_LIMIT: usize = 256;
+
 pub(crate) struct State {
     version: Option<SourceVersion>,
     turn: TurnObservation,
+    removed_wakes: std::collections::VecDeque<String>,
     pub(crate) requests: HashMap<RequestId, SamplingRequest>,
     tools: HashMap<String, ToolState>,
     compactions: HashMap<CompactKey, CurrentCompact>,
@@ -706,6 +709,7 @@ impl Default for Source {
                     sequence: 0,
                 }),
                 turn: TurnObservation::Unregistered,
+                removed_wakes: Default::default(),
                 requests: HashMap::new(),
                 tools: HashMap::new(),
                 compactions: HashMap::new(),
@@ -720,6 +724,21 @@ impl Default for Source {
 }
 
 impl Source {
+    pub(crate) fn remember_removed_wake(&self, prompt_id: &str) {
+        let mut state = self.lock();
+        if state.removed_wakes.iter().any(|removed| removed == prompt_id) {
+            return;
+        }
+        if state.removed_wakes.len() == REMOVED_WAKE_RECEIPT_LIMIT {
+            state.removed_wakes.pop_front();
+        }
+        state.removed_wakes.push_back(prompt_id.to_owned());
+    }
+
+    pub(crate) fn removed_wake(&self, prompt_id: &str) -> bool {
+        self.lock().removed_wakes.iter().any(|removed| removed == prompt_id)
+    }
+
     pub(crate) fn lock(&self) -> MutexGuard<'_, State> {
         self.0.state.lock()
     }

@@ -458,7 +458,7 @@ async fn run_cycle(backend: &ChannelBackend, i: u64) {
 
     let blocking = true;
     let timeout_ms = Some(5_000);
-    let snapshot = backend.query(&bg_id, blocking, timeout_ms, None).await;
+    let snapshot = backend.query(&bg_id, blocking, timeout_ms, None).await.expect("query acknowledgement");
     assert!(
         snapshot.is_some(),
         "cycle {i}: completed subagent must be queryable"

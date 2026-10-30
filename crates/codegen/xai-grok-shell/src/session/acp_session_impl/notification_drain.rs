@@ -329,6 +329,13 @@ impl SessionActor {
         self: Arc<Self>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
     ) {
+        if !self.restart_recovery_permitted() {
+            let state = self.state.lock().await;
+            if !state.pending_inputs.front().is_some_and(|input|
+                matches!(input.input_origin.as_prompt_origin(), PromptOrigin::User)) {
+                return;
+            }
+        }
         if self.compaction.cancel.manual_is_sealed() {
             return;
         }
@@ -888,10 +895,13 @@ impl SessionActor {
     #[cfg(test)]
     pub(super) async fn list_running_subagents(
         &self,
-    ) -> Vec<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection> {
+    ) -> Result<
+        Vec<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection>,
+        xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError,
+    > {
         self.reconcile_live_orphaned_subagents().await;
         let Some(event_tx) = self.tool_context.subagent_event_tx.clone() else {
-            return Vec::new();
+            return Err(xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError::CoordinatorUnavailable);
         };
         xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(event_tx)
             .list_running(self.session_info.id.0.as_ref())
@@ -905,6 +915,9 @@ impl SessionActor {
         self: Arc<Self>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
     ) {
+        if !self.restart_recovery_permitted() {
+            return;
+        }
         if self.compaction.cancel.manual_is_sealed() {
             return;
         }
@@ -1376,6 +1389,7 @@ mod live_orphan_hook_tests {
 
     fn running_inspection(id: &str) -> SubagentInspection {
         SubagentInspection {
+            terminal: None,
             snapshot: SubagentSnapshot {
                 subagent_id: id.to_string(),
                 description: "task".to_string(),
@@ -1574,7 +1588,8 @@ mod live_orphan_hook_tests {
                     actor.list_running_subagents(),
                 )
                 .await
-                .expect("list_running heal must not hang");
+                .expect("list_running heal must not hang")
+                .expect("coordinator ACK");
                 assert!(listed.is_empty());
 
                 let reread: SubagentMeta = serde_json::from_str(
@@ -1596,7 +1611,7 @@ mod live_orphan_hook_tests {
                 let id = "sa-list-live";
                 let (actor, sub_dir, mut persistence_rx) =
                     actor_with_orphan(id, Some(running_inspection(id))).await;
-                let listed = actor.list_running_subagents().await;
+                let listed = actor.list_running_subagents().await.expect("coordinator ACK");
                 let [listed_one] = listed.as_slice() else {
                     panic!("expected one listed subagent: {listed:?}");
                 };

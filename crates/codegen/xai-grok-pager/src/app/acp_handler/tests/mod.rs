@@ -2399,6 +2399,7 @@ mod interjection;
 mod session_routing;
 mod plugins;
 mod subagents;
+mod subagent_cancel_f3;
 mod completion_replay;
 mod appview_child_replay;
 mod subagent_attempt_lifecycle;

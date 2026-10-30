@@ -2852,23 +2852,28 @@ impl MvpAgent {
         &self,
         subagent_id: &str,
         disposition: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition,
-    ) -> xai_grok_tools::implementations::grok_build::task::types::SubagentCancelOutcome {
-        use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend as _;
+        binding: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelBinding,
+    ) -> Result<
+        xai_grok_tools::implementations::grok_build::task::types::SubagentCancelOutcome,
+        xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError,
+    > {
         xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
                 self.subagent_event_tx.event_sender().0,
             )
-            .cancel(
+            .cancel_with_binding(
                 subagent_id,
                 xai_grok_tools::implementations::grok_build::task::types::SubagentActor::Human,
                 disposition,
+                binding,
             )
             .await
     }
     pub(crate) async fn list_running_subagents(
         &self,
         parent_session_id: &str,
-    ) -> Vec<
-        xai_grok_tools::implementations::grok_build::task::types::SubagentInspection,
+    ) -> Result<
+        Vec<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection>,
+        xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError,
     > {
         let backend = xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
             self.subagent_event_tx.event_sender().0,
@@ -2891,8 +2896,9 @@ impl MvpAgent {
     pub(crate) async fn inspect_subagent(
         &self,
         subagent_id: &str,
-    ) -> Option<
-        xai_grok_tools::implementations::grok_build::task::types::SubagentInspection,
+    ) -> Result<
+        Option<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection>,
+        xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError,
     > {
         xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
                 self.subagent_event_tx.event_sender().0,
@@ -2905,8 +2911,9 @@ impl MvpAgent {
         subagent_id: &str,
         block: bool,
         timeout_ms: Option<u64>,
-    ) -> Option<
-        xai_grok_tools::implementations::grok_build::task::types::SubagentSnapshot,
+    ) -> Result<
+        Option<xai_grok_tools::implementations::grok_build::task::types::SubagentSnapshot>,
+        xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError,
     > {
         xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
                 self.subagent_event_tx.event_sender().0,
@@ -4391,6 +4398,7 @@ impl MvpAgent {
                 session_env,
             )
             .with_hunk_tracking_enabled(hunk_tracking_enabled);
+        tool_ctx.restart_recovery = self.cfg.borrow().leader_restart_recovery.session(session_info.id.0.as_ref());
         tool_ctx.process_scope = Some(ProcessScope::new());
         let workspace_ops = self
             .resolve_workspace_ops()

@@ -127,7 +127,7 @@ async fn stopped_root_blocks_completed_wake_from_authorized_spawner() {
         SubagentOwner::Task,
     );
     finish_child(&mut coordinator, "child");
-    coordinator.spawn_blocked_sessions.insert("root".to_owned());
+    coordinator.spawn_blocked_sessions.insert("root".to_owned(), SpawnBlock::Stopped);
 
     assert_eq!(
         ActiveAgentMessageOutcome::NotActiveOrFinalizing,
@@ -545,7 +545,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
                             SubagentActor::Human,
                             SubagentCancelDisposition::Stop
                         )
-                        .await,
+                        .await.expect("cancel acknowledgement"),
                     SubagentCancelOutcome::Cancelled { .. }
                 ));
             }
@@ -782,7 +782,7 @@ async fn completed_wake_rejects_at_concurrent_limit_without_losing_terminal_reco
     assert!(harness.wake_runs.try_recv().is_err());
     let terminal = backend
         .query("identity-source", false, None, None)
-        .await
+        .await.expect("query acknowledgement")
         .expect("completed record remains queryable");
     assert!(terminal.status.is_terminal());
     assert_eq!(

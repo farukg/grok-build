@@ -34,6 +34,7 @@ pub mod render;
 pub mod row;
 mod row_activity;
 mod row_title;
+pub(crate) mod running_order;
 mod search;
 pub mod state;
 #[cfg(test)]
@@ -48,7 +49,9 @@ pub use row::{
     roster_activity_to_state, sort_rows,
 };
 pub(crate) use row::{RowScope, build_rows_with_roster};
-pub(crate) use row::{WorkspaceRowInputs, build_rows_with_workspace};
+pub(crate) use row::WorkspaceRowInputs;
+#[cfg(test)]
+pub(crate) use row::build_rows_with_workspace;
 pub(crate) use state::DashboardStopAction;
 pub use state::{
     DashboardDispatchMode, DashboardRowId, DashboardState, Filter, FilterValue, Focusable,
@@ -64,13 +67,18 @@ pub fn overlay_cycle_order(
     state: &DashboardState,
     agents: &crate::app::session_views::SessionViews,
 ) -> Vec<crate::app::agent::AgentId> {
-    cycle_order(
+    top_level_ids(&row::build_rows_with_roster_ordered(
         agents,
         &state.pinned,
         &state.reorder,
         state.grouping,
         &state.filter,
-    )
+        render::cached_home(),
+        &[],
+        SessionLane::Main,
+        RowScope::all(),
+        Some(&state.running_order),
+    ))
 }
 
 /// [`overlay_cycle_order`] from the v1 layout inputs alone, for a dashboard that has not been materialized.

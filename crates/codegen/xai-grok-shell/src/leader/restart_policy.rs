@@ -1,101 +1,106 @@
-//! Leader restart policy: classify how long ago the previous leader run stopped,
-//! and persist the leader heartbeat that the classification reads.
-//!
-//! The heartbeat is a single RFC3339 wall-clock timestamp written next to the
-//! leader lock. It is refreshed periodically by the leader server loop and once
-//! more on orderly shutdown, so a SIGKILL still leaves the last periodic beat.
+//! Only an observed orderly stop supplies a stop timestamp.
+//! A running marker after a crash, or a legacy heartbeat, is not a stop time.
 
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use xai_grok_tools::types::restart_recovery::RestartStartup;
 use xai_grok_tools::types::restart_stop_age::RestartStopAge;
 
-/// Stopped longer than this ⇒ previously running obligations are cancelled at
-/// leader startup. Exactly one hour is still fresh.
 pub const STALE_AFTER: chrono::Duration = chrono::Duration::seconds(3600);
 
-/// How often the leader server loop refreshes the heartbeat. Far below
-/// [`STALE_AFTER`] so a leader that dies between beats is still classified fresh.
-pub const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
-
-/// The heartbeat file paired with a leader lock path
-/// (`/x/leader-foo.lock` becomes `/x/leader-foo.heartbeat`).
 pub fn heartbeat_path(lock_path: &Path) -> PathBuf {
     lock_path.with_extension("heartbeat")
 }
 
-/// Classify a recorded stop instant against `now`. Pure.
-///
-/// A timestamp at or after `now` (clock rollback) cannot prove freshness and
-/// classifies as stale: the decision runs once at startup and errs toward
-/// cancelling work the user last touched over an hour ago.
 pub fn classify(recorded_at: DateTime<Utc>, now: DateTime<Utc>) -> RestartStopAge {
-    let elapsed = now.signed_duration_since(recorded_at);
-    if elapsed > STALE_AFTER {
+    if now.signed_duration_since(recorded_at) > STALE_AFTER {
         RestartStopAge::Stale
     } else {
         RestartStopAge::Fresh
     }
 }
 
-/// The stop-age classification plus why, for startup logging.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordedStopAge {
-    /// No heartbeat exists: a first run with no prior leader state.
     FirstRun,
-    Fresh {
-        recorded_at: DateTime<Utc>,
-    },
-    /// Older than the grace window, unreadable, or in the future.
-    Stale {
-        recorded_at: Option<DateTime<Utc>>,
-    },
+    Unknown,
+    Fresh { recorded_at: DateTime<Utc> },
+    Stale { recorded_at: DateTime<Utc> },
 }
 
 impl RecordedStopAge {
     pub fn stop_age(self) -> RestartStopAge {
         match self {
-            RecordedStopAge::FirstRun | RecordedStopAge::Fresh { .. } => RestartStopAge::Fresh,
-            RecordedStopAge::Stale { .. } => RestartStopAge::Stale,
+            Self::FirstRun | Self::Unknown | Self::Fresh { .. } => RestartStopAge::Fresh,
+            Self::Stale { .. } => RestartStopAge::Stale,
         }
     }
 }
 
-/// Read the heartbeat and classify it. An unreadable or corrupt heartbeat is
-/// stale: the cancel only happens at startup, so the safe reading wins.
-pub fn read_stop_age(heartbeat: &Path, now: DateTime<Utc>) -> RecordedStopAge {
+pub struct RestartEvidence {
+    pub stop: RecordedStopAge,
+    pub startup: RestartStartup,
+}
+
+pub fn read_evidence(heartbeat: &Path, now: DateTime<Utc>) -> std::io::Result<RestartEvidence> {
     let contents = match std::fs::read_to_string(heartbeat) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return RecordedStopAge::FirstRun;
+            return Ok(RestartEvidence { stop: RecordedStopAge::FirstRun, startup: RestartStartup::Continue });
         }
         Err(error) => {
-            tracing::warn!(path = %heartbeat.display(), %error, "leader heartbeat unreadable");
-            return RecordedStopAge::Stale { recorded_at: None };
+            tracing::warn!(path = %heartbeat.display(), %error, "leader stop evidence unreadable");
+            return Err(error);
         }
     };
-    let recorded_at = DateTime::parse_from_rfc3339(contents.trim())
+    let mut lines = contents.lines();
+    let stop = lines.next().and_then(|line| line.trim().strip_prefix("stopped "))
+        .and_then(|stamp| DateTime::parse_from_rfc3339(stamp).ok())
         .map(|stamp| stamp.with_timezone(&Utc))
-        .map_err(|error| {
-            tracing::warn!(path = %heartbeat.display(), %error, "leader heartbeat unparsable");
-            error
-        })
-        .ok();
-    let Some(recorded_at) = recorded_at else {
-        return RecordedStopAge::Stale { recorded_at: None };
+        .filter(|stamp| *stamp <= now)
+        .map_or(RecordedStopAge::Unknown, |recorded_at| match classify(recorded_at, now) {
+            RestartStopAge::Fresh => RecordedStopAge::Fresh { recorded_at },
+            RestartStopAge::Stale => RecordedStopAge::Stale { recorded_at },
+        });
+    let startup = match lines.next() {
+        None => RestartStartup::Continue,
+        Some(line) => {
+            let encoded = line.strip_prefix("restart ").ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidData, "invalid persisted restart cohort",
+            ))?;
+            serde_json::from_str(encoded).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
+        }
     };
-    match classify(recorded_at, now) {
-        RestartStopAge::Fresh => RecordedStopAge::Fresh { recorded_at },
-        RestartStopAge::Stale => RecordedStopAge::Stale {
-            recorded_at: Some(recorded_at),
-        },
-    }
+    Ok(RestartEvidence { stop, startup })
 }
 
-/// Overwrite the heartbeat with `at`. The leader holds the lock, so it is the
-/// only writer; a torn write classifies as stale on the next start.
-pub fn write_heartbeat(heartbeat: &Path, at: DateTime<Utc>) -> std::io::Result<()> {
-    std::fs::write(heartbeat, format!("{}\n", at.to_rfc3339()))
+pub fn write_running_with_startup(heartbeat: &Path, startup: RestartStartup) -> std::io::Result<()> {
+    write_record(heartbeat, "running".into(), startup)
+}
+
+pub fn write_stopped_with_startup(heartbeat: &Path, at: DateTime<Utc>, startup: RestartStartup) -> std::io::Result<()> {
+    write_record(heartbeat, format!("stopped {}", at.to_rfc3339()), startup)
+}
+
+fn write_record(path: &Path, lifecycle: String, startup: RestartStartup) -> std::io::Result<()> {
+    let startup = serde_json::to_string(&startup).map_err(std::io::Error::other)?;
+    crate::session::storage::write_bytes_atomic(path, format!("{lifecycle}\nrestart {startup}\n").as_bytes())
+}
+
+#[cfg(test)]
+fn read_stop_age(heartbeat: &Path, now: DateTime<Utc>) -> RecordedStopAge {
+    read_evidence(heartbeat, now).map_or(RecordedStopAge::Unknown, |evidence| evidence.stop)
+}
+
+#[cfg(test)]
+fn write_running(heartbeat: &Path) -> std::io::Result<()> {
+    write_running_with_startup(heartbeat, RestartStartup::Continue)
+}
+
+#[cfg(test)]
+fn write_heartbeat(heartbeat: &Path, at: DateTime<Utc>) -> std::io::Result<()> {
+    write_stopped_with_startup(heartbeat, at, RestartStartup::Continue)
 }
 
 #[cfg(test)]

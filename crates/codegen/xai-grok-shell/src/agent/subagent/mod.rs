@@ -190,6 +190,7 @@ impl RunShellChildHarnessConfig {
 /// Avoids passing `&MvpAgent` (which would require the coordinator to know about the full agent struct).
 /// Built by `MvpAgent::build_subagent_spawn_context()`.
 pub(crate) struct SubagentSpawnContext {
+    pub leader_restart_recovery: xai_grok_tools::types::restart_recovery::LeaderRestartRecovery,
     /// Parent's LSP runtime, inherited via ToolContext, same as fs/terminal.
     pub lsp: Option<std::sync::Arc<dyn xai_grok_tools::implementations::lsp::LspBackend>>,
     /// Root session's process scope, inherited so the subagent's own child processes are reaped when the parent session closes. It is the root's, not an intermediate parent's.
@@ -2790,10 +2791,21 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
         }
     }
     for (subagent_id, replayed_spawn) in candidates {
-        let inspection = backend.inspect(&subagent_id).await;
+        let inspection = match backend.inspect(&subagent_id).await {
+            Ok(inspection) => inspection,
+            Err(error) => {
+                tracing::warn!(
+                    subagent_id = %subagent_id,
+                    parent_session_id,
+                    %error,
+                    "Subagent reconciliation skipped: inspection not confirmed"
+                );
+                continue;
+            }
+        };
         if inspection
             .as_ref()
-            .is_some_and(|inspection| inspection.snapshot.is_running())
+            .is_some_and(|inspection| inspection.snapshot.is_running() || inspection.terminal.is_none())
         {
             continue;
         }

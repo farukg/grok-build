@@ -137,7 +137,7 @@ async fn fault_preserves_completed(fault: ParentInputFault) {
                 "daac322604fcb24c23cfbb43d63f82fedf01cc551dd08457f67a7dc0162d20b0"
             );
             let restored = bounded(backend.query(&id, true, Some(30_000), None))
-                .await
+                .await.expect("query acknowledgement")
                 .unwrap();
             assert!(
                 matches!(&restored.status, SubagentSnapshotStatus::Completed { output, .. }

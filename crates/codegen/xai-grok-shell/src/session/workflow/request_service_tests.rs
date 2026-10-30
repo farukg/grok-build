@@ -50,6 +50,7 @@ async fn control_requests_stop_by_name_and_reject_inapplicable_or_unknown_runs()
     spawn_request_service(
         rx,
         RequestServiceOptions {
+            restart_recovery: Default::default(),
             manager,
             cwd: std::env::temp_dir(),
             session_dir: std::env::temp_dir(),
@@ -123,6 +124,7 @@ async fn requests_are_rejected_while_workflows_are_disabled() {
     spawn_request_service(
         rx,
         RequestServiceOptions {
+            restart_recovery: Default::default(),
             manager,
             cwd: std::env::temp_dir(),
             session_dir: std::env::temp_dir(),

@@ -1224,6 +1224,7 @@ pub(crate) async fn spawn_session_actor(
         .unzip();
     let task_model_selection = LatchedTaskModelSelection::default();
     let rebuild_spec = std::sync::Arc::new(crate::session::agent_rebuild::AgentRebuildSpec {
+        restart_recovery: tool_context.restart_recovery.clone(),
         working_directory: tool_context.cwd.as_path().to_path_buf(),
         terminal_backend: terminal_backend.clone(),
         fs_backend: fs_backend.clone(),
@@ -1786,6 +1787,7 @@ pub(crate) async fn spawn_session_actor(
     crate::session::workflow::request_service::spawn_request_service(
         workflow_launch_rx,
         crate::session::workflow::request_service::RequestServiceOptions {
+            restart_recovery: tool_context.restart_recovery.clone(),
             manager: workflow_manager.clone(),
             cwd: std::path::PathBuf::from(session_info.cwd.as_str()),
             session_dir: crate::session::persistence::session_dir(&session_info),
@@ -2164,6 +2166,8 @@ pub(crate) async fn spawn_session_actor(
         .current_actions
         .attach_replay_queue(session.event_tx.clone());
     drop(actor_build);
+    session.cancel_stale_session_work().await
+        .map_err(|error| xai_grok_agent::AgentBuildError::InvalidConfig(error.to_string()))?;
     let (actor_setup_timer, actor_setup_span) = spawn_await_step!("actor_setup");
     async {
         if owns_permission_manager {

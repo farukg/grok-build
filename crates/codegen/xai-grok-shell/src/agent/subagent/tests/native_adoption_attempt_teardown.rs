@@ -28,7 +28,7 @@ async fn await_failed_attempt_teardown(
     bounded(actor.cmd_tx.closed()).await;
     bounded(async {
         loop {
-            match backend.query(id, false, None, None).await {
+            match backend.query(id, false, None, None).await.expect("query acknowledgement") {
                 None => break,
                 Some(snapshot) => match snapshot.status {
                     SubagentSnapshotStatus::Initializing
@@ -154,7 +154,7 @@ async fn failed_adopter_retains_original(cut: FailedAdoption) {
         assert!(std::iter::from_fn(|| f.gateway.try_recv().ok()).all(|message| !matches!(message,
             xai_acp_lib::AcpClientMessage::ExtNotification(args) if args.request.params.get().contains("subagent_spawned"))));
         response.release();
-        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(result.status, SubagentSnapshotStatus::Completed { output, .. } if output.contains("retained-original-result")));
         response.assert_satisfied();
         let terminal = f.storage.load_summary(&f.info).await.unwrap();
@@ -241,7 +241,7 @@ async fn native_released_adoption_gate_teardown_before_projection_retains_origin
                 xai_grok_test_support::sse::responses_api_script_exact(r#"{"value":"released-gate-retry-result"}"#, "test-model")));
         assert_eq!(bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt)).await,
             ActiveAgentMessageOutcome::Accepted { message_id: f.reference.message_id.clone() });
-        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
+        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.expect("query acknowledgement").unwrap();
         assert!(matches!(result.status, SubagentSnapshotStatus::Completed { output, .. } if output.contains("released-gate-retry-result")));
         response.assert_satisfied();
         let completed = f.storage.load_summary(&f.info).await.unwrap();
@@ -342,7 +342,7 @@ async fn native_published_adoption_processing_explicit_cancel_is_terminal() {
             drop(live);
             let result =
                 bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None))
-                    .await
+                    .await.expect("query acknowledgement")
                     .unwrap();
             assert!(matches!(
                 result.status,

@@ -49,6 +49,8 @@ mod settings;
 mod subagent_activity;
 mod subagent_lifecycle;
 mod workflow_ingest;
+mod wake_settlement;
+pub(crate) use wake_settlement::apply_wake_cancel_settlement;
 #[cfg(test)]
 #[allow(unused_imports)]
 use background::*;
@@ -89,7 +91,6 @@ use permissions::{
 #[allow(unused_imports)]
 use prompt_origin::*;
 use prompt_origin::{backdate_child_turn_clock, note_child_live_prompt, viewer_turn_anchor};
-pub(crate) use prompt_origin::{close_wake_turn_from_terminal, WakeTerminal};
 pub(crate) use prompt_origin::{
     is_scheduler_fired_prompt, is_server_initiated_prompt, is_wake_prompt,
     should_adopt_running_prompt,
@@ -126,11 +127,12 @@ use settings::{
     handle_announcements_update, handle_models_update, handle_sessions_changed,
     handle_settings_update,
 };
-pub(crate) use subagent_activity::finalize_killed_subagent;
 #[cfg(test)]
 #[allow(unused_imports)]
 use subagent_activity::*;
 use subagent_activity::{subagent_activity_label, sync_subagent_activity};
+mod cancel_terminal;
+pub(crate) use cancel_terminal::apply_cancel_terminal;
 use subagent_lifecycle::{
     LifecycleOrigin, classify_subagent_lifecycle, prepare_tui_subagent_lifecycle,
 };
@@ -159,10 +161,14 @@ fn ack_prompt_from_update(view: &mut AgentView, meta: &NotificationMeta) {
     }
 }
 pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
-    if !is_streaming_output(&msg) {
+    let streaming = is_streaming_output(&msg);
+    if !streaming {
         app.invalidate_session_cycle();
     }
     let state_changed = handle_inner(msg, app);
+    if !streaming {
+        crate::views::dashboard::running_order::observe_app(app);
+    }
     let flushed = app.flush_image_notices_if_root();
     state_changed || flushed
 }
@@ -194,7 +200,9 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                 .with_tool(&notif.request.update);
             let affected = match find_session_match(app, &notif.request.session_id) {
                 Some(SessionMatch(id)) if is_child_view(app, id) => {
-                    apply_child_acp_update(app, id, notif.request.update, &meta)
+                    let affected = apply_child_acp_update(app, id, notif.request.update, &meta);
+                    crate::views::dashboard::running_order::observe_agent(app, id);
+                    affected
                 }
                 Some(SessionMatch(id)) => {
                     let is_active = is_matched_agent_active(app, id);
@@ -545,6 +553,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             crate::app::dispatch::flush_held_local_queue_into_wait(app, Some(id));
                         app.pending_effects.extend(flush);
                     }
+                    crate::views::dashboard::running_order::observe_agent(app, id);
                     mutated && is_active
                     })
                 }

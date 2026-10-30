@@ -173,6 +173,12 @@ impl ReceiverTurnOrigin {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ReceiverRetirement {
+    HistoryDeleted,
+    StaleRestart,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub(crate) enum DeliveryExecution {
@@ -603,6 +609,10 @@ impl DeliveryReceiverState {
         }
     }
     pub(crate) fn retire(&mut self) {
+        self.retire_for(ReceiverRetirement::HistoryDeleted);
+    }
+
+    pub(crate) fn retire_for(&mut self, retirement: ReceiverRetirement) {
         for record in self.records.values_mut() {
             match record.execution {
                 DeliveryExecution::Queued { .. }
@@ -610,7 +620,10 @@ impl DeliveryReceiverState {
                 | DeliveryExecution::Interrupted { .. } => {
                     record.revision = record.revision.saturating_add(1).max(4);
                     record.execution = DeliveryExecution::Cancelled {
-                        reason: "session history explicitly deleted".into(),
+                        reason: match retirement {
+                            ReceiverRetirement::HistoryDeleted => "session history explicitly deleted",
+                            ReceiverRetirement::StaleRestart => "cancelled after stale leader restart",
+                        }.into(),
                     };
                 }
                 DeliveryExecution::Succeeded

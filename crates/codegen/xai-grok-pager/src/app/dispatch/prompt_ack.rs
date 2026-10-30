@@ -64,6 +64,9 @@ pub(super) fn reconcile_overdue_prompt_acks_at(
     for (_, agent) in app.agents.all_mut() {
         fired |= poll_prompt_ack_for_agent(agent, deadlines, now, &mut effects);
     }
+    if fired {
+        crate::views::dashboard::running_order::observe_app(app);
+    }
     fired.then_some(effects)
 }
 

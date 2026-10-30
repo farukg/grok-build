@@ -130,6 +130,7 @@ impl MemoryV2AccessSlot {
 /// See module docs for the invariant: this is the only construction site for `Agent` in the shell crate.
 /// Cloning is intentionally not derived; the spec lives behind an [`Arc`] and is shared by cloning that `Arc`.
 pub(crate) struct AgentRebuildSpec {
+    pub restart_recovery: xai_grok_tools::types::restart_recovery::SessionRestartRecovery,
     pub working_directory: PathBuf,
     pub terminal_backend: Arc<dyn TerminalBackend>,
     pub fs_backend: Arc<dyn AsyncFileSystem>,
@@ -247,6 +248,7 @@ impl AgentRebuildSpec {
     ) -> Result<(Agent, std::time::Duration), AgentBuildError> {
         let build_phase_start = std::time::Instant::now();
         let Self {
+            restart_recovery,
             working_directory,
             terminal_backend,
             fs_backend,
@@ -348,6 +350,7 @@ impl AgentRebuildSpec {
             terminal_backend.clone(),
             tools_notification_handle.clone(),
         )
+        .with_restart_recovery(restart_recovery.clone())
         .from_definition(definition)
         .with_compaction_policy(compaction_policy.clone())
         .with_reminder_policy(reminder_policy.clone())
@@ -530,6 +533,7 @@ pub(crate) fn test_rebuild_spec_with_media_gen_batch_limits(
 ) -> Arc<AgentRebuildSpec> {
     let (uq_tx, _uq_rx) = tokio::sync::mpsc::unbounded_channel();
     Arc::new(AgentRebuildSpec {
+        restart_recovery: Default::default(),
         working_directory: std::env::temp_dir(),
         terminal_backend: Arc::new(
             xai_grok_tools::computer::local::LocalTerminalBackend::new_local(

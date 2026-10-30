@@ -738,6 +738,7 @@ pub(super) fn dispatch_dashboard_create_new_agent_with_detail(app: &mut AppView)
     let (new_id, mut effects) = dispatch_new_session_inner_with_id(app, model_id, false);
     set_create_permission_mode(&mut effects, pending_mode);
     if let Some(agent) = app.agents.get_mut(&new_id) {
+        agent.explicitly_opened = true;
         apply_pending_dispatch_config(agent, pending_model.as_ref(), pending_mode, policy_block);
     }
     if let Some(d) = app.dashboard.as_mut() {
@@ -954,6 +955,7 @@ pub(super) fn dispatch_dashboard_confirm_worktree(
         _ => None,
     }) {
         if let Some(agent) = app.agents.get_mut(&new_id) {
+            agent.explicitly_opened = true;
             apply_pending_dispatch_config(
                 agent,
                 pending_model.as_ref(),
@@ -968,6 +970,7 @@ pub(super) fn dispatch_dashboard_confirm_worktree(
         if attach {
             if let Some(d) = app.dashboard.as_mut() {
                 d.restore_peek_viewport(&mut app.agents);
+                d.filter = crate::views::dashboard::Filter::None;
                 d.focus_row(crate::views::dashboard::DashboardRowId::TopLevel(new_id));
                 d.attached_agent = Some(new_id);
             }
@@ -1280,6 +1283,7 @@ pub(super) fn dispatch_dashboard_dispatch(
             entry.images = std::mem::take(&mut pasted_images);
             entry.chip_elements = chip_elements;
         }
+        agent.explicitly_opened = true;
         apply_pending_dispatch_config(agent, pending_model.as_ref(), pending_mode, policy_block);
     }
     crate::prompt_images::drain_and_cleanup(
@@ -1941,7 +1945,7 @@ fn workspace_rows_in_lane(
             &children
         }
     };
-    let rows = crate::views::dashboard::build_rows_with_workspace(
+    let rows = crate::views::dashboard::row::build_rows_with_workspace_ordered(
         &app.agents,
         inputs,
         filter,
@@ -1956,6 +1960,7 @@ fn workspace_rows_in_lane(
         app.dashboard.as_ref().map_or(&[], |d| d.reorder.as_slice()),
         child_rows,
         dashboard_row_scope(app),
+        app.dashboard.as_ref().map(|d| &d.running_order),
     );
     (rows, inputs.grouping())
 }
@@ -1986,7 +1991,7 @@ pub(super) fn dashboard_focusables(app: &AppView) -> Vec<crate::views::dashboard
         workspace_rows(app, &d.filter)
     } else {
         (
-            crate::views::dashboard::build_rows_with_roster(
+            crate::views::dashboard::row::build_rows_with_roster_ordered(
                 &app.agents,
                 &d.pinned,
                 &d.reorder,
@@ -1996,6 +2001,7 @@ pub(super) fn dashboard_focusables(app: &AppView) -> Vec<crate::views::dashboard
                 roster,
                 d.session_lane(),
                 dashboard_row_scope(app),
+                Some(&d.running_order),
             ),
             d.grouping,
         )

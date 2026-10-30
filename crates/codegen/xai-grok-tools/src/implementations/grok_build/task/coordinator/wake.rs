@@ -96,10 +96,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 .send(ActiveAgentMessageOutcome::NotActiveOrFinalizing);
             return;
         }
-        if self.completed.get(&subagent_id).is_some_and(|child| {
-            self.spawn_blocked_sessions
-                .contains(&child.request.parent_session_id)
-        }) {
+        if ingress.request.request.child_submission.is_revoked()
+            || self.completed.get(&subagent_id).is_some_and(|child| {
+                self.spawn_blocked_sessions.contains_key(&child.request.parent_session_id)
+                    && !ingress.request.request.child_submission.permits(&child.request.parent_session_id, &subagent_id)
+            })
+        {
             let _ = ingress
                 .request
                 .respond_to
@@ -148,12 +150,14 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             permit,
         } = ingress;
         let wake_message_source = Self::message_source(&sender_context);
+        wake_request.runtime_overrides.child_submission = request.child_submission.clone();
         wake_request.prompt = request.text().to_string();
         wake_request.fork_context = false;
         wake_request.parent_prompt_id = None;
         wake_request.run_in_background = true;
         wake_request.await_to_completion = false;
-        wake_request.cancel_token = tokio_util::sync::CancellationToken::new();
+        wake_request.cancel_token = wake_request.runtime_overrides.child_submission.cancellation()
+            .unwrap_or_default();
         let delivery = ActiveAgentMessageDelivery::new(
             ActiveAgentMessage {
                 message_id: uuid::Uuid::now_v7().to_string(),

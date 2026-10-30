@@ -9,7 +9,7 @@ pub enum RestartStopAge {
     /// state: previously running work keeps running, quiescent stays quiescent.
     #[default]
     Fresh,
-    /// Last stop older than the grace window (or an unreadable heartbeat):
+    /// An observed orderly stop older than the grace window:
     /// previously running obligations are cancelled once at startup.
     Stale,
 }

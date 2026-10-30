@@ -1662,6 +1662,9 @@ pub enum Effect {
         prompt_id: String,
         target: crate::app::agent_view::PromptTarget,
     },
+    CancelWake {
+        request: xai_grok_shell::session::WakeCancelRequest,
+    },
     /// Cancel the current turn.
     CancelTurn {
         session_id: acp::SessionId,
@@ -1717,6 +1720,7 @@ pub enum Effect {
     },
     /// Cancel a subagent via `x.ai/subagent/cancel`.
     KillSubagent {
+        binding_epoch: u32,
         session_id: acp::SessionId,
         subagent_id: String,
         attempt_id: Option<String>,
@@ -2471,16 +2475,16 @@ impl RenameSessionRequest {
         }
     }
 }
-/// Outcome of an `x.ai/subagent/cancel` request, telling dispatch whether the pager must finalize the subagent row itself.
+/// A stop response is not a producer completion.
 #[derive(Debug)]
 pub enum SubagentKillOutcome {
-    /// Shell stopped a live subagent; a real `SubagentFinished` is coming.
     StoppedLive,
-    /// Nothing live to stop (orphan / already finished), so no finish is coming and the pager finalizes the row.
-    /// `status` carries the real terminal status for an already-finished orphan; `None` (unknown id / older shell) renders as "cancelled".
-    NothingLive { status: Option<String> },
-    /// The cancel RPC failed; the subagent may still be running, so leave the row alone rather than show a false terminal state.
-    RpcFailed,
+    AlreadyFinished { status: String },
+    Terminal(xai_grok_shell::extensions::task::SubagentTerminalDto),
+    NotFound,
+    CustodyUnavailable,
+    Unconfirmed,
+    RpcFailed { message: String },
 }
 #[derive(Debug)]
 pub enum McpAuthTriggerOutcome {
@@ -2541,6 +2545,13 @@ pub enum WorkspaceWriteCompletion {
         outcome: xai_grok_dashboard_store::LayoutApplyOutcome,
     },
 }
+#[derive(Debug)]
+pub enum WakeCancelTransport {
+    Encode,
+    Disconnected,
+    InvalidReply,
+}
+
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum TaskResult {
@@ -2813,6 +2824,10 @@ pub enum TaskResult {
         error: String,
         blocks: Vec<acp::ContentBlock>,
     },
+    WakeCancelComplete {
+        request: xai_grok_shell::session::WakeCancelRequest,
+        result: Result<xai_grok_shell::session::WakeCancelResponse, WakeCancelTransport>,
+    },
     /// Cancel notification was sent (fire-and-forget).
     /// The real turn end comes via PromptResponse.
     CancelComplete,
@@ -2870,6 +2885,7 @@ pub enum TaskResult {
     },
     /// Response to `x.ai/subagent/cancel`; see [`SubagentKillOutcome`].
     KillSubagentComplete {
+        binding_epoch: u32,
         session_id: acp::SessionId,
         subagent_id: String,
         attempt_id: Option<String>,

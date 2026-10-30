@@ -70,7 +70,11 @@ pub(super) fn root_admission(
         return RootAdmission::Buffer;
     }
     if view.is_self_originated_prompt(pid)
-        || view.live_admission_tracker().has_admitted_live_prompt(pid)
+        || (view.live_admission_tracker().has_admitted_live_prompt(pid)
+            && !view
+                .running_wake_turn
+                .as_ref()
+                .is_some_and(|wake| wake.prompt_id == pid))
     {
         return RootAdmission::Drop;
     }

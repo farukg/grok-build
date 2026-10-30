@@ -207,7 +207,7 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
             max_output_bytes,
             WaitHint::NotRequested,
         )
-        .await;
+        .await?;
 
         let has_pending =
             !initial.pending_bash_ids.is_empty() || !initial.pending_subagent_ids.is_empty();
@@ -221,7 +221,7 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
                 &initial.pending_subagent_ids,
                 deadline,
             )
-            .await
+            .await?
             .hint(requested, timeout);
             resolve_tasks(
                 &input.task_ids,
@@ -231,7 +231,7 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
                 max_output_bytes,
                 wait_hint,
             )
-            .await
+            .await?
             .results
         } else {
             initial.results

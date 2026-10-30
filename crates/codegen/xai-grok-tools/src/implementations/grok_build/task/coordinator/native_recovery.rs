@@ -84,7 +84,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 if busy
                     || self
                         .spawn_blocked_sessions
-                        .contains(&custody.launch.parent_session_id) =>
+                        .contains_key(&custody.launch.parent_session_id) =>
             {
                 let _ = command
                     .respond_to

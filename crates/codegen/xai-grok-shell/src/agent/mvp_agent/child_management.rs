@@ -136,6 +136,39 @@ impl MvpAgent {
         }
     }
 
+    pub(super) async fn management_disk_child_submission(
+        &self,
+        parent: &acp::SessionId,
+        child: &acp::SessionId,
+    ) -> Result<ManagementSession<'_>, acp::Error> {
+        use crate::session::storage::StorageAdapter as _;
+        let operation = self.session_registry.begin_management(child);
+        let guard = operation.lock.clone().lock_owned().await;
+        let cwd = self.get_session_cwd(parent).ok_or_else(|| failed("saved child parent is unavailable"))?;
+        let source = crate::agent::subagent::durable_resume_source(child.0.as_ref(), parent.0.as_ref(), &cwd)
+            .map_err(|error| failed(&error.to_string()))?;
+        if source.subagent_id != child.0.as_ref() || source.child_session_id != child.0.as_ref() {
+            return Err(failed("saved child identity does not match the submission"));
+        }
+        let info = crate::session::info::Info { id: child.clone(), cwd: source.child_cwd };
+        let storage = crate::session::storage::JsonlStorageAdapter::with_root(crate::util::grok_home::grok_home());
+        let summary = storage.load_summary(&info).await.map_err(|error| failed(&error.to_string()))?;
+        if summary.info.id != *child || !summary.is_subagent_kind()
+            || summary.parent_session_id.as_deref().is_some_and(|owner| owner != parent.0.as_ref())
+            || self.resident_handle(child).is_some()
+        {
+            return Err(failed("saved child ownership changed during submission"));
+        }
+        let mut cleanup = PreparationCleanup { agent: self, id: child.clone(), armed: true };
+        self.drain_old_session_thread(child).await;
+        self.load_child_for_management(&info).await?;
+        let handle = self.resident_handle(child).ok_or_else(|| failed("saved child did not install an actor"))?;
+        crate::agent::subagent::durable_resume_source(child.0.as_ref(), parent.0.as_ref(), &cwd)
+            .map_err(|error| failed(&error.to_string()))?;
+        cleanup.armed = false;
+        Ok(ManagementSession { handle, agent: self, temporary: Some(guard) })
+    }
+
     pub(crate) async fn management_session(
         &self,
         id: &acp::SessionId,

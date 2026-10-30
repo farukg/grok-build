@@ -34,6 +34,12 @@ const DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 /// queued before assuming the signal is lost rather than refused.
 const SPAWN_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Copy)]
+enum StartupAdmission {
+    Ready,
+    Quarantined,
+}
+
 enum LoopFireOutcome {
     Spawned(String),
     Skipped,
@@ -195,12 +201,23 @@ impl SchedulerActor {
     }
 
     pub async fn run(mut self) {
-        self.await_subagent_wiring_for_due_tasks().await;
-        self.cancel_restored_tasks_after_stale_restart().await;
-        self.announce_existing_tasks().await;
+        let mut startup = match self.cancel_restored_tasks_after_stale_restart().await {
+            Ok(()) => {
+                self.await_subagent_wiring_for_due_tasks().await;
+                self.announce_existing_tasks().await;
+                StartupAdmission::Ready
+            }
+            Err(error) => {
+                tracing::error!(%error, "scheduler startup cancellation failed; scheduler quarantined");
+                StartupAdmission::Quarantined
+            }
+        };
 
         loop {
-            let next_fire = self.compute_next_fire_delay().await;
+            let next_fire = match startup {
+                StartupAdmission::Ready => self.compute_next_fire_delay().await,
+                StartupAdmission::Quarantined => Duration::MAX,
+            };
 
             tokio::select! {
                 biased;
@@ -211,6 +228,28 @@ impl SchedulerActor {
                 }
 
                 Some(cmd) = self.cmd_rx.recv() => {
+                    if matches!(startup, StartupAdmission::Quarantined)
+                        && !matches!(&cmd, SchedulerCommand::List { .. })
+                    {
+                        let permitted = self.resources.lock().await
+                            .get::<crate::types::restart_recovery::SessionRestartRecovery>()
+                            .is_none_or(|recovery| recovery.admission().permits_recovery());
+                        let result = if permitted {
+                            self.cancel_restored_tasks_after_stale_restart().await
+                        } else {
+                            Err(SchedulerError::RestartQuiescent)
+                        };
+                        match result {
+                            Ok(()) => {
+                                startup = StartupAdmission::Ready;
+                                self.announce_existing_tasks().await;
+                            }
+                            Err(error) => {
+                                Self::reject_command(cmd, error);
+                                continue;
+                            }
+                        }
+                    }
                     self.handle_command(cmd).await;
                 }
 
@@ -220,6 +259,9 @@ impl SchedulerActor {
             }
         }
 
+        if matches!(startup, StartupAdmission::Quarantined) {
+            return;
+        }
         let task_ids: Vec<String> = {
             let res = self.resources.lock().await;
             res.get::<State<SchedulerState>>()
@@ -272,6 +314,10 @@ impl SchedulerActor {
 
     async fn compute_next_fire_delay(&self) -> Duration {
         let res = self.resources.lock().await;
+        if res.get::<crate::types::restart_recovery::SessionRestartRecovery>()
+            .is_some_and(|recovery| !recovery.admission().permits_recovery()) {
+            return Duration::MAX;
+        }
         let scheduler_state = res.get::<State<SchedulerState>>();
         scheduler_state
             .map(|s| {
@@ -297,6 +343,10 @@ impl SchedulerActor {
         debug_assert!(self.pending_removal.is_none());
         let now = Utc::now();
         let mut res = self.resources.lock().await;
+        if res.get::<crate::types::restart_recovery::SessionRestartRecovery>()
+            .is_some_and(|recovery| !recovery.admission().permits_recovery()) {
+            return;
+        }
         let state = res.get_or_default::<State<SchedulerState>>();
         let idx = state.tasks.iter().position(|task| {
             task.next_wake_at() <= now && !self.blocked_expiries.contains(&task.id)
@@ -848,51 +898,53 @@ impl SchedulerActor {
         LoopFireOutcome::Spawned(subagent_id)
     }
 
-    /// Leader restart policy: after a stale stop (> grace window), persisted
-    /// tasks are cancelled once at startup through the same durable-removal path
-    /// as an explicit delete, instead of re-firing against a dead chain.
-    /// A failed durable removal leaves the remaining tasks running (today's
-    /// behavior) rather than discarding them without acknowledgement.
-    async fn cancel_restored_tasks_after_stale_restart(&mut self) {
-        let stale = {
+    /// A failed startup drain must not admit any remaining restored task.
+    async fn cancel_restored_tasks_after_stale_restart(&mut self) -> Result<(), SchedulerError> {
+        use crate::types::restart_recovery::{ScheduledRestartCohort, SessionRestartRecovery};
+        let recovery = {
             let res = self.resources.lock().await;
-            res.get::<crate::types::restart_stop_age::RestartStopAge>()
-                .is_some_and(|age| *age == crate::types::restart_stop_age::RestartStopAge::Stale)
+            res.get::<SessionRestartRecovery>().cloned()
         };
-        if !stale {
-            return;
+        let Some(recovery) = recovery else {
+            return Ok(());
+        };
+        let mut cohort = recovery.scheduled.lock().await;
+        if matches!(*cohort, ScheduledRestartCohort::Unselected) {
+            let res = self.resources.lock().await;
+            let ids = res.get::<State<SchedulerState>>()
+                .map(|state| state.tasks.iter().map(|task| task.id.clone()).collect())
+                .unwrap_or_default();
+            *cohort = ScheduledRestartCohort::Selected(ids);
         }
         loop {
-            let next_id = {
-                let res = self.resources.lock().await;
-                res.get::<State<SchedulerState>>()
-                    .and_then(|state| state.tasks.first().map(|task| task.id.clone()))
+            let next_id = match &*cohort {
+                ScheduledRestartCohort::Unselected => return Err(SchedulerError::Cancelled),
+                ScheduledRestartCohort::Selected(ids) => ids.first().cloned(),
+                ScheduledRestartCohort::Drained => return Ok(()),
             };
             let Some(task_id) = next_id else {
-                return;
+                *cohort = ScheduledRestartCohort::Drained;
+                return Ok(());
             };
             let (reply, response) = tokio::sync::oneshot::channel();
             self.handle_command(SchedulerCommand::Delete {
                 id: task_id.clone(),
                 reply,
-            })
-            .await;
+            }).await;
             match response.await {
-                Ok(Ok(true)) => tracing::info!(
-                    task_id = %task_id,
-                    "cancelled persisted scheduled task after stale leader restart"
-                ),
-                Ok(Ok(false)) => return,
-                Ok(Err(error)) => {
-                    tracing::error!(
-                        task_id = %task_id,
-                        %error,
-                        "durable cancellation of a persisted scheduled task failed; \
-                         leaving remaining tasks running"
-                    );
-                    return;
+                Ok(Ok(true)) => {},
+                Ok(Ok(false)) => {
+                    self.pending_removal = Some(PendingDurableRemoval {
+                        task_id: task_id.clone(),
+                        reservation: self.clock.prepare_transition(1),
+                    });
+                    self.complete_pending_removal().await?;
                 }
-                Err(_) => return,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => return Err(SchedulerError::Cancelled),
+            }
+            if let ScheduledRestartCohort::Selected(ids) = &mut *cohort {
+                ids.retain(|id| id != &task_id);
             }
         }
     }
@@ -930,9 +982,27 @@ impl SchedulerActor {
         }
     }
 
+    fn reject_command(cmd: SchedulerCommand, error: SchedulerError) {
+        match cmd {
+            SchedulerCommand::Create { reply, .. } | SchedulerCommand::Update { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
+            SchedulerCommand::Delete { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
+            SchedulerCommand::List { reply } => drop(reply),
+        }
+    }
+
     async fn handle_command(&mut self, cmd: SchedulerCommand) {
         match cmd {
             SchedulerCommand::Create { task, reply } => {
+                if self.resources.lock().await
+                    .get::<crate::types::restart_recovery::SessionRestartRecovery>()
+                    .is_some_and(|recovery| !recovery.admission().permits_recovery()) {
+                    let _ = reply.send(Err(SchedulerError::RestartQuiescent));
+                    return;
+                }
                 if let Some(pending) = &self.pending_removal {
                     let _ =
                         reply.send(Err(SchedulerError::RemovalPending(pending.task_id.clone())));
@@ -1049,6 +1119,10 @@ impl SchedulerActor {
 }
 
 #[cfg(test)]
+#[path = "restart_cohort_tests.rs"]
+mod restart_cohort_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1060,6 +1134,69 @@ mod tests {
     use crate::types::resources::{Resources, WebCitationCounter};
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn stale_startup_without_durable_consumer_never_enters_fire_loop() {
+        let mut task = ScheduledTask::new(1, "must not fire".into(), true, false);
+        task.created_at = Utc::now() - chrono::Duration::hours(2);
+        let task_id = task.id.clone();
+        let (mut actor, _) = make_boundary_actor(vec![task], 0);
+        let startup = crate::types::restart_recovery::LeaderRestartRecovery::stale(Utc::now());
+        actor.resources.lock().await.insert(startup.register(
+            "scheduler-test", Utc::now() - chrono::Duration::hours(2), Default::default(),
+        ));
+        let resources = actor.resources.clone();
+        let (notifications, mut received) = ToolNotificationHandle::channel();
+        actor.notification_handle = notifications;
+        let (commands, command_rx) = mpsc::unbounded_channel();
+        actor.cmd_rx = command_rx;
+        let cancel = actor.cancel_token.clone();
+        let running = tokio::spawn(actor.run());
+        let (reply, response) = tokio::sync::oneshot::channel();
+        commands.send(SchedulerCommand::List { reply }).unwrap();
+        let snapshot = tokio::time::timeout(Duration::from_secs(1), response).await.unwrap().unwrap();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].id, task_id);
+        cancel.cancel();
+        running.await.unwrap();
+        assert!(received.try_recv().is_err());
+        let resources = resources.lock().await;
+        let tasks = &resources.get::<State<SchedulerState>>().unwrap().tasks;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, task_id);
+    }
+
+    #[tokio::test]
+    async fn stale_startup_drains_old_tasks_but_keeps_new_runtime_tasks() {
+        let old = ScheduledTask::new(3600, "old".into(), true, false);
+        let (mut actor, _) = make_boundary_actor(vec![old], 0);
+        let startup = crate::types::restart_recovery::LeaderRestartRecovery::stale(Utc::now());
+        actor.resources.lock().await.insert(startup.register(
+            "scheduler-test", Utc::now() - chrono::Duration::hours(2), Default::default(),
+        ));
+        let cancel = actor.cancel_token.clone();
+        let (commands, command_rx) = mpsc::unbounded_channel();
+        actor.cmd_rx = command_rx;
+        let running = tokio::spawn(actor.run());
+        let (reply, response) = tokio::sync::oneshot::channel();
+        commands.send(SchedulerCommand::List { reply }).unwrap();
+        assert!(response.await.unwrap().tasks.is_empty());
+
+        let recovery = startup.session("scheduler-test");
+        recovery.acknowledge(recovery.admission().after_user_message());
+        let new = ScheduledTask::new(3600, "new message work".into(), true, false);
+        let new_id = new.id.clone();
+        let (reply, response) = tokio::sync::oneshot::channel();
+        commands.send(SchedulerCommand::Create { task: new, reply }).unwrap();
+        response.await.unwrap().unwrap();
+        let (reply, response) = tokio::sync::oneshot::channel();
+        commands.send(SchedulerCommand::List { reply }).unwrap();
+        let snapshot = response.await.unwrap();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].id, new_id);
+        cancel.cancel();
+        running.await.unwrap();
+    }
 
     #[test]
     fn truncate_chars_does_not_split_a_four_byte_scalar_at_the_cut() {
@@ -1182,7 +1319,7 @@ mod tests {
         )
     }
 
-    fn make_boundary_actor(
+    pub(super) fn make_boundary_actor(
         tasks: Vec<ScheduledTask>,
         revision: u64,
     ) -> (SchedulerActor, mpsc::UnboundedReceiver<ToolNotification>) {

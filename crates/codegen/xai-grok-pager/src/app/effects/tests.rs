@@ -258,7 +258,7 @@ fn parse_kill_outcome_none_for_error_or_malformed() {
             None
         );
 }
-/// Typed `outcome`: `Cancelled` maps to `StoppedLive`; `AlreadyFinished` and `NotFound` map to `NothingLive` (carrying the real status when known).
+/// Stop acknowledgement, recorded terminal status and a miss remain distinct.
 #[test]
 fn parse_subagent_kill_outcome_reads_typed_outcome() {
     assert!(matches!(
@@ -271,16 +271,16 @@ fn parse_subagent_kill_outcome_reads_typed_outcome() {
             parse_subagent_kill_outcome(
                 r#"{"result":{"subagentId":"sa-1","cancelled":false,"outcome":{"kind":"already_finished","status":"completed"}}}"#
             ),
-            SubagentKillOutcome::NothingLive { status: Some(s) } if s == "completed"
+            SubagentKillOutcome::AlreadyFinished { status: s } if s == "completed"
         ));
     assert!(matches!(
             parse_subagent_kill_outcome(
                 r#"{"result":{"subagentId":"sa-1","cancelled":false,"outcome":{"kind":"not_found"}}}"#
             ),
-            SubagentKillOutcome::NothingLive { status: None }
+            SubagentKillOutcome::NotFound
         ));
 }
-/// An older shell sends no `outcome`; the parser falls back to the legacy `cancelled` bool: true means `StoppedLive`, false means `NothingLive`.
+/// A legacy positive ACK is accepted; a negative bool proves no terminal.
 #[test]
 fn parse_subagent_kill_outcome_falls_back_to_legacy_bool() {
     assert!(matches!(
@@ -289,24 +289,22 @@ fn parse_subagent_kill_outcome_falls_back_to_legacy_bool() {
         ));
     assert!(matches!(
             parse_subagent_kill_outcome(r#"{"result":{"subagentId":"sa-1","cancelled":false}}"#),
-            SubagentKillOutcome::NothingLive { status: None }
+            SubagentKillOutcome::Unconfirmed
         ));
 }
-/// An unknown future `kind` deserializes to `Unknown` (via `#[serde(other)]`) and falls back to the always-present `cancelled` bool.
-/// It must not become `RpcFailed`, which would leave the row stuck.
 #[test]
-fn parse_subagent_kill_outcome_unknown_kind_falls_back_to_legacy_bool() {
+fn parse_subagent_kill_outcome_unknown_kind_is_unconfirmed() {
     assert!(matches!(
             parse_subagent_kill_outcome(
                 r#"{"result":{"subagentId":"sa-1","cancelled":true,"outcome":{"kind":"some_future_kind"}}}"#
             ),
-            SubagentKillOutcome::StoppedLive
+            SubagentKillOutcome::Unconfirmed
         ));
     assert!(matches!(
             parse_subagent_kill_outcome(
                 r#"{"result":{"subagentId":"sa-1","cancelled":false,"outcome":{"kind":"some_future_kind"}}}"#
             ),
-            SubagentKillOutcome::NothingLive { status: None }
+            SubagentKillOutcome::Unconfirmed
         ));
 }
 /// Round-trip through the agent's own serializer guards the two sides against drifting apart.
@@ -327,7 +325,7 @@ fn parse_subagent_kill_outcome_round_trips_agent_serialization() {
         .unwrap();
     assert!(matches!(
             parse_subagent_kill_outcome(&wire),
-            SubagentKillOutcome::NothingLive { status: Some(s) } if s == "failed"
+            SubagentKillOutcome::AlreadyFinished { status: s } if s == "failed"
         ));
 }
 /// A top-level payload (no `result` envelope), error envelopes, and malformed payloads are a failed RPC (`RpcFailed`).
@@ -336,21 +334,51 @@ fn parse_subagent_kill_outcome_round_trips_agent_serialization() {
 fn parse_subagent_kill_outcome_rpc_failed_for_error_or_malformed() {
     assert!(matches!(
             parse_subagent_kill_outcome(r#"{"cancelled":true}"#),
-            SubagentKillOutcome::RpcFailed
+            SubagentKillOutcome::RpcFailed { .. }
         ));
     assert!(matches!(
             parse_subagent_kill_outcome(r#"{"result":null,"error":"session not found"}"#),
-            SubagentKillOutcome::RpcFailed
+            SubagentKillOutcome::RpcFailed { .. }
         ));
     assert!(matches!(
             parse_subagent_kill_outcome("not json"),
-            SubagentKillOutcome::RpcFailed
+            SubagentKillOutcome::RpcFailed { .. }
         ));
     assert!(matches!(
             parse_subagent_kill_outcome("{}"),
-            SubagentKillOutcome::RpcFailed
+            SubagentKillOutcome::RpcFailed { .. }
         ));
 }
+#[test]
+fn parse_subagent_terminal_requires_complete_typed_evidence() {
+    for wire in [
+        r#"{"result":{"snapshot":{"status":"completed"}}}"#,
+        r#"{"result":{"terminal":{"subagentId":"sa-1","parentSessionId":"p","childSessionId":"c","result":{"attemptId":"at1.one","state":{"status":"completed"},"output":"done","turns":2,"durationMs":123,"tokensUsed":456}}}}"#,
+        r#"{"result":{"terminal":{"subagentId":"sa-1","parentSessionId":"p","childSessionId":"c","result":{"attemptId":"at1.one","state":{"status":"running"},"output":"done","toolCalls":7,"turns":2,"durationMs":123,"tokensUsed":456}}}}"#,
+        r#"{"result":{"terminal":null},"error":"unavailable"}"#,
+    ] {
+        assert!(parse_subagent_terminal(wire).is_none(), "{wire}");
+    }
+    let evidence = parse_subagent_terminal(
+        r#"{"result":{"terminal":{"subagentId":"sa-1","parentSessionId":"p","childSessionId":"c","result":{"attemptId":"at1.one","state":{"status":"completed"},"output":"producer output","toolCalls":7,"turns":2,"durationMs":123,"tokensUsed":456}}}}"#,
+    ).expect("complete producer record");
+    assert_eq!(evidence.result.output.as_ref(), "producer output");
+    assert_eq!(evidence.result.tool_calls, 7);
+    assert_eq!(evidence.result.turns, 2);
+    assert_eq!(evidence.result.duration_ms, 123);
+    assert_eq!(evidence.result.tokens_used, 456);
+}
+
+#[test]
+fn parse_subagent_kill_outcome_custody_and_error_are_explicit() {
+    assert!(matches!(parse_subagent_kill_outcome(
+        r#"{"result":{"subagentId":"sa-1","cancelled":false,"outcome":{"kind":"custody_unavailable","target_id":"sa-1"}}}"#,
+    ), SubagentKillOutcome::CustodyUnavailable));
+    assert!(matches!(parse_subagent_kill_outcome(
+        r#"{"result":{"subagentId":"sa-1","cancelled":true,"outcome":{"kind":"cancelled"}},"error":"acknowledgement lost"}"#,
+    ), SubagentKillOutcome::RpcFailed { message } if message == "acknowledgement lost"));
+}
+
 /// Image-bearing interjections carry the blocks as a `content` array.
 #[test]
 fn interject_params_carry_content_when_blocks_present() {

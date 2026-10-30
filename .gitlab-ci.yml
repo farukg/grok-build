@@ -21,10 +21,8 @@ workflow:
 
 stages: [cleanup, validate, build]
 
-# Runs first in every pipeline: drops runner-side build state the next build
-# does not need (leftover buildah containers, dangling layers, cache and dist
-# entries untouched for CLEANUP_OLDER_THAN_DAYS, default 14 days). Shares the
-# build resource group so it never prunes under a running build.
+# Blocks consumers until executor writer settlement and Cargo cleanup delivery exist.
+# No project state is reclaimed while these owner contracts remain unresolved.
 linux-cache-cleanup:
   stage: cleanup
   needs: []
@@ -40,8 +38,10 @@ linux-cache-cleanup:
 
 linux-lockfile:
   stage: validate
-  needs: []
-  when: always
+  needs:
+    - job: linux-cache-cleanup
+      artifacts: false
+  when: on_success
   tags: [nspawn]
   interruptible: true
   resource_group: grok-linux-release
@@ -60,11 +60,13 @@ linux-lockfile:
 
 linux-format:
   stage: validate
-  needs: []
+  needs:
+    - job: linux-cache-cleanup
+      artifacts: false
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^grok-lock-inputs-/'
       when: never
-    - when: always
+    - when: on_success
   tags: [nspawn]
   interruptible: true
   resource_group: grok-linux-release
@@ -83,13 +85,15 @@ linux-format:
 
 linux-tokio-checked-deadline:
   stage: validate
-  needs: []
+  needs:
+    - job: linux-cache-cleanup
+      artifacts: false
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^grok-lock-inputs-/'
       when: never
     - exists:
         - third_party/tokio/src/time/checked_deadline.rs
-      when: always
+      when: on_success
   tags: [nspawn]
   interruptible: true
   resource_group: grok-linux-release
@@ -113,6 +117,8 @@ linux-release:
       when: never
     - when: on_success
   needs:
+    - job: linux-cache-cleanup
+      artifacts: false
     - job: linux-format
       artifacts: false
     - job: linux-lockfile
@@ -144,6 +150,8 @@ linux-regression:
     - when: manual
       allow_failure: true
   needs:
+    - job: linux-cache-cleanup
+      artifacts: false
     - job: linux-format
       artifacts: false
     - job: linux-lockfile

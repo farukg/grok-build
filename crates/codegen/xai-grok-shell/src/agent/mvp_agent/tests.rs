@@ -12,6 +12,8 @@ use std::num::NonZeroU64;
 mod current_actions_boundary_tests;
 #[path = "notification_suppression_load_tests.rs"]
 mod notification_suppression_load;
+#[path = "restart_cohort_load_tests.rs"]
+mod restart_cohort_load;
 #[path = "tests/ordered_publication_tests.rs"]
 mod ordered_publication_tests;
 #[path = "tests/request_preview_tests.rs"]
@@ -1189,6 +1191,7 @@ async fn file_toolset_override_e2e_to_finalized_toolset() {
         auth_provider: None,
         attribution_callback: None,
         system_reminder_tag: xai_grok_tools::reminders::DEFAULT_REMINDER_TAG,
+        restart_recovery: Default::default(),
     };
     let toolset = builder
         .finalize(def.tool_config, ctx)

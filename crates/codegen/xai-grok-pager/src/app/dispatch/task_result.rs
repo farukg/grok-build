@@ -1090,6 +1090,22 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
+        TaskResult::WakeCancelComplete { request, result } => {
+            match result {
+                Ok(response) => {
+                    if let Some(agent) = find_agent_by_session_id(
+                        &mut app.agents,
+                        &request.context.binding.session_id,
+                    ) {
+                        crate::app::acp_handler::apply_wake_cancel_settlement(
+                            agent, &request, response,
+                        );
+                    }
+                }
+                Err(error) => tracing::warn!(?error, "wake cancel receipt unavailable"),
+            }
+            vec![]
+        }
         TaskResult::CancelComplete => {
             tracing::trace!("Cancel notification sent successfully");
             vec![]
@@ -1204,20 +1220,58 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             vec![]
         }
         TaskResult::KillSubagentComplete {
+            binding_epoch,
             session_id,
             subagent_id,
             attempt_id,
             outcome,
         } => {
-            if let SubagentKillOutcome::NothingLive { status } = outcome {
-                let status = status.as_deref().unwrap_or("cancelled");
-                crate::app::acp_handler::finalize_killed_subagent(
-                    app,
-                    &session_id,
-                    &subagent_id,
-                    attempt_id.as_deref(),
-                    status,
-                );
+            let current = app.agents.values().any(|agent| {
+                agent.session.session_id.as_ref() == Some(&session_id)
+                    && agent.session_binding_epoch == binding_epoch
+                    && agent.subagent_sessions.values().any(|info| {
+                        info.subagent_id.as_ref() == subagent_id
+                            && info.attempt.lifecycle.current_attempt_id() == attempt_id.as_deref()
+                    })
+            });
+            if !current {
+                return vec![];
+            }
+            let message = match outcome {
+                SubagentKillOutcome::StoppedLive => None,
+                SubagentKillOutcome::Terminal(terminal) => {
+                    if crate::app::acp_handler::apply_cancel_terminal(
+                        app, &session_id, &subagent_id, attempt_id.as_deref(), terminal,
+                    ) {
+                        None
+                    } else {
+                        Some("Subagent stop response could not confirm terminal evidence for this attempt".to_owned())
+                    }
+                }
+                SubagentKillOutcome::AlreadyFinished { status } => {
+                    Some(format!("Subagent reported {status}, but terminal evidence could not be confirmed"))
+                }
+                SubagentKillOutcome::NotFound => Some("Subagent stop not confirmed: target not found".to_owned()),
+                SubagentKillOutcome::CustodyUnavailable => Some("Subagent stop not confirmed: execution custody is unavailable".to_owned()),
+                SubagentKillOutcome::Unconfirmed => Some("Subagent stop was not confirmed".to_owned()),
+                SubagentKillOutcome::RpcFailed { message } => Some(message),
+            };
+            if let Some(message) = message {
+                for agent in app.agents.values_mut() {
+                    if agent.session.session_id.as_ref() != Some(&session_id)
+                        || agent.session_binding_epoch != binding_epoch
+                    {
+                        continue;
+                    }
+                    if let Some(info) = agent.subagent_sessions.values_mut().find(|info| {
+                        info.subagent_id.as_ref() == subagent_id
+                            && info.attempt.lifecycle.current_attempt_id() == attempt_id.as_deref()
+                    }) {
+                        info.attempt.pending_kill = false;
+                        info.attempt.kill_requested_at = None;
+                        agent.show_toast(&message);
+                    }
+                }
             }
             vec![]
         }

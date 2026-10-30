@@ -320,6 +320,10 @@ pub enum CancelHistoryDisposition {
     /// Pop the named front if the no-output window is still open. `None` is a legacy client.
     RewindIfNoOutput { prompt_id: Option<String> },
 }
+#[path = "cancel_settlement.rs"]
+mod cancel_settlement;
+pub use cancel_settlement::*;
+
 #[derive(Debug, Clone, Default)]
 pub struct CancelOptions {
     pub cancel_subagents: bool,
@@ -332,7 +336,7 @@ pub struct CancelOptions {
     /// Lets the cancel resolve a target the anonymous path cannot bind: a queued wake row
     /// (removed instead of running later) or an already-finished wake whose client is stuck
     /// on a lost terminal receipt. `None` for legacy/anonymous cancels.
-    pub target_prompt_id: Option<String>,
+    pub target_prompt_id: Option<CancelTarget>,
 }
 /// Why the catalog is being (re-)advertised; labels the `slash.advertise` unified-log line.
 #[derive(Debug, Clone, Copy)]

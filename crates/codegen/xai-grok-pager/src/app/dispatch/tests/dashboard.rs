@@ -1,4 +1,7 @@
 //! Tests for dashboard dispatchers: attach, overlays, rows, and permissions.
+#[path = "dashboard_empty_agent_navigation_tests.rs"]
+mod empty_agent_navigation_tests;
+
 use super::*;
 use crate::app::actions::Direction;
 use crate::app::app_view::InputOutcome;

@@ -574,7 +574,11 @@ impl ParkedSpawnReadyMessage {
 }
 
 impl<R: ChildRunner> SubagentCoordinator<R> {
-    pub(super) fn handle_send_active_message(&mut self, ingress: ActiveMessageIngress) {
+    pub(super) fn handle_send_active_message(&mut self, mut ingress: ActiveMessageIngress) {
+        if let Err(outcome) = self.authorize_child_message(&mut ingress.request) {
+            let _ = ingress.request.respond_to.send(outcome);
+            return;
+        }
         if let Err(outcome) = self.verify_message_sender(&ingress.request.sender_context) {
             let _ = ingress.request.respond_to.send(outcome);
             return;

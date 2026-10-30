@@ -8,6 +8,9 @@ use crate::implementations::grok_build::task::types::{
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+#[path = "backend_observation_tests.rs"]
+mod observation_tests;
+
 const TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 async fn await_with_timeout<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -130,8 +133,8 @@ impl SubagentBackend for BackendWithoutActiveMessages {
         _block: bool,
         _timeout_ms: Option<u64>,
         _observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
-    ) -> Option<SubagentSnapshot> {
-        None
+    ) -> Result<Option<SubagentSnapshot>, super::super::types::SubagentAccessError> {
+        Ok(None)
     }
 
     async fn cancel(
@@ -139,12 +142,12 @@ impl SubagentBackend for BackendWithoutActiveMessages {
         _id: &str,
         _actor: SubagentActor,
         _disposition: SubagentCancelDisposition,
-    ) -> SubagentCancelOutcome {
-        SubagentCancelOutcome::NotFound
+    ) -> Result<SubagentCancelOutcome, super::super::types::SubagentAccessError> {
+        Ok(SubagentCancelOutcome::NotFound)
     }
 
-    async fn list_owned(&self) -> Vec<super::super::types::SubagentInspection> {
-        Vec::new()
+    async fn list_owned(&self) -> Result<Vec<super::super::types::SubagentInspection>, super::super::types::SubagentAccessError> {
+        Ok(Vec::new())
     }
 
     async fn validate_type(
@@ -286,7 +289,7 @@ async fn channel_backend_query_found() {
             .unwrap();
     });
 
-    let snap = backend.query("sub-1", true, Some(5000), None).await;
+    let snap = backend.query("sub-1", true, Some(5000), None).await.expect("query acknowledgement");
     let snap = snap.expect("snapshot should be present");
     assert_eq!(snap.subagent_id, "sub-1");
     assert_eq!(snap.description, "find bugs");
@@ -325,7 +328,7 @@ async fn channel_backend_query_non_blocking_passes_through() {
         req.respond_to.send(None).unwrap();
     });
 
-    let snap = backend.query("sub-nb", false, None, None).await;
+    let snap = backend.query("sub-nb", false, None, None).await.expect("query acknowledgement");
     assert!(snap.is_none());
 
     handle.await.unwrap();
@@ -348,6 +351,22 @@ async fn coordinator_exits_after_external_senders_drop() {
 }
 
 #[tokio::test]
+async fn channel_backend_query_lost_ack() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let backend = ChannelBackend::for_session(tx, "root");
+    let responder = async {
+        let req = recv_event!(rx, Query);
+        assert_eq!(req.subagent_id, "child");
+        assert_eq!(req.parent_session_id.as_deref(), Some("root"));
+        assert!(!req.block);
+        assert_eq!(req.timeout_ms, None);
+        drop(req.respond_to);
+    };
+    let (result, ()) = tokio::join!(backend.query("child", false, None, None), responder);
+    assert!(matches!(result, Err(super::super::types::SubagentAccessError::CoordinatorUnavailable)));
+}
+
+#[tokio::test]
 async fn channel_backend_query_not_found() {
     let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
     let backend = ChannelBackend::new(tx);
@@ -357,7 +376,7 @@ async fn channel_backend_query_not_found() {
         req.respond_to.send(None).unwrap();
     });
 
-    let snap = backend.query("nonexistent", false, None, None).await;
+    let snap = backend.query("nonexistent", false, None, None).await.expect("query acknowledgement");
     assert!(snap.is_none());
 
     handle.await.unwrap();
@@ -582,7 +601,7 @@ async fn channel_backend_cancel_success() {
             SubagentCancelDisposition::Stop,
         )
         .await;
-    assert!(matches!(outcome, SubagentCancelOutcome::Cancelled { .. }));
+    assert!(matches!(outcome, Ok(SubagentCancelOutcome::Cancelled { .. })));
 
     handle.await.unwrap();
 }
@@ -601,7 +620,129 @@ async fn channel_backend_cancel_closed_channel() {
             SubagentCancelDisposition::Stop,
         )
         .await;
-    assert!(matches!(outcome, SubagentCancelOutcome::NotFound));
+    assert!(matches!(outcome, Err(super::super::types::SubagentAccessError::CoordinatorUnavailable)));
+}
+
+#[tokio::test]
+async fn channel_backend_cancel_lost_ack_is_not_not_found() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let backend = ChannelBackend::new(tx);
+    let receiver = tokio::spawn(async move {
+        let request = recv_event!(rx, Cancel);
+        drop(request.respond_to);
+    });
+    let outcome = backend.cancel(
+        "sub-cancel", SubagentActor::Human, SubagentCancelDisposition::Stop,
+    ).await;
+    assert!(matches!(outcome, Err(super::super::types::SubagentAccessError::CoordinatorUnavailable)));
+    receiver.await.unwrap();
+}
+
+#[tokio::test]
+async fn channel_backend_list_owned_closed_channel() {
+    let (tx, rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    drop(rx);
+    let backend = ChannelBackend::for_session(tx, "root");
+    assert!(matches!(
+        await_with_timeout(backend.list_owned()).await,
+        Err(super::super::types::SubagentAccessError::CoordinatorUnavailable)
+    ));
+}
+
+#[tokio::test]
+async fn channel_backend_list_owned_lost_ack() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let backend = ChannelBackend::for_session(tx, "root");
+    let receiver = tokio::spawn(async move {
+        let request = recv_event!(rx, ListOwned);
+        assert_eq!(request.parent_session_id.as_deref(), Some("root"));
+        drop(request.respond_to);
+    });
+    assert!(matches!(
+        await_with_timeout(backend.list_owned()).await,
+        Err(super::super::types::SubagentAccessError::CoordinatorUnavailable)
+    ));
+    receiver.await.unwrap();
+}
+
+#[tokio::test]
+async fn channel_backend_list_owned_empty() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let backend = ChannelBackend::for_session(tx, "root");
+    let receiver = tokio::spawn(async move {
+        let request = recv_event!(rx, ListOwned);
+        assert_eq!(request.parent_session_id.as_deref(), Some("root"));
+        request.respond_to.send(Vec::new()).unwrap();
+    });
+    assert!(await_with_timeout(backend.list_owned()).await.unwrap().is_empty());
+    receiver.await.unwrap();
+}
+
+#[tokio::test]
+async fn channel_backend_list_owned_nonempty() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let backend = ChannelBackend::for_session(tx, "root");
+    let receiver = tokio::spawn(async move {
+        let request = recv_event!(rx, ListOwned);
+        assert_eq!(request.parent_session_id.as_deref(), Some("root"));
+        request.respond_to.send(vec![SubagentInspection {
+            snapshot: SubagentSnapshot {
+                subagent_id: "child".to_owned(),
+                description: "find bugs".to_owned(),
+                subagent_type: "explore".to_owned(),
+                status: super::super::types::SubagentSnapshotStatus::Completed {
+                    output: "result".to_owned(),
+                    tool_calls: 2,
+                    turns: 1,
+                    worktree_path: None,
+                },
+                started_at_epoch_ms: 1000,
+                duration_ms: 200,
+                persona: Some("reviewer".to_owned()),
+            },
+            terminal: Some(super::super::terminal::SubagentTerminal {
+                attempt_id: "attempt-1".to_owned(),
+                state: super::super::terminal::SubagentTerminalState::Completed,
+                output: Arc::from("result"),
+                tool_calls: 2,
+                turns: 1,
+                duration_ms: 200,
+                tokens_used: 37,
+            }),
+            parent_session_id: "root".to_owned(),
+            child_session_id: "child-session".to_owned(),
+            fork_parent_prompt_id: Some("prompt".to_owned()),
+            resumed_from: Some("previous".to_owned()),
+        }]).unwrap();
+    });
+    let listed = await_with_timeout(backend.list_owned()).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    let child = &listed[0];
+    assert_eq!(child.snapshot.subagent_id, "child");
+    assert_eq!(child.snapshot.description, "find bugs");
+    assert_eq!(child.snapshot.subagent_type, "explore");
+    assert_eq!(child.snapshot.started_at_epoch_ms, 1000);
+    assert_eq!(child.snapshot.duration_ms, 200);
+    assert_eq!(child.snapshot.persona.as_deref(), Some("reviewer"));
+    assert!(matches!(
+        &child.snapshot.status,
+        super::super::types::SubagentSnapshotStatus::Completed {
+            output, tool_calls: 2, turns: 1, worktree_path: None,
+        } if output == "result"
+    ));
+    let terminal = child.terminal.as_ref().expect("terminal evidence is preserved");
+    assert_eq!(terminal.attempt_id, "attempt-1");
+    assert!(matches!(terminal.state, super::super::terminal::SubagentTerminalState::Completed));
+    assert_eq!(terminal.output.as_ref(), "result");
+    assert_eq!(terminal.tool_calls, 2);
+    assert_eq!(terminal.turns, 1);
+    assert_eq!(terminal.duration_ms, 200);
+    assert_eq!(terminal.tokens_used, 37);
+    assert_eq!(child.parent_session_id, "root");
+    assert_eq!(child.child_session_id, "child-session");
+    assert_eq!(child.fork_parent_prompt_id.as_deref(), Some("prompt"));
+    assert_eq!(child.resumed_from.as_deref(), Some("previous"));
+    receiver.await.unwrap();
 }
 
 #[tokio::test]
@@ -699,7 +840,7 @@ async fn channel_backend_query_closed_channel() {
     let backend = ChannelBackend::new(tx);
 
     let snap = backend.query("sub-1", false, None, None).await;
-    assert!(snap.is_none());
+    assert!(matches!(snap, Err(super::super::types::SubagentAccessError::CoordinatorUnavailable)));
 }
 
 // ── validate_type ────────────────────────────────────────────────

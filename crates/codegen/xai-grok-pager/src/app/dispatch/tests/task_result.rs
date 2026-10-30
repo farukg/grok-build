@@ -987,10 +987,8 @@ fn confirmation_required_builds_plugins_confirmation_with_confirmed_true() {
     }
 }
 
-/// Regression: a failed `x.ai/subagent/cancel` RPC must NOT finalize the row; the subagent may still be running.
-/// Only a shell response of "nothing live" finalizes it.
 #[test]
-fn kill_rpc_failure_does_not_finalize_but_nothing_live_does() {
+fn kill_rpc_failure_and_not_found_preserve_the_unfinished_attempt() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     let sid = acp::SessionId::new("test-session".to_owned());
@@ -1004,10 +1002,11 @@ fn kill_rpc_failure_does_not_finalize_but_nothing_live_does() {
     // The RPC failed, so leave the row (the subagent may still be running)
     dispatch_task_result(
         TaskResult::KillSubagentComplete {
+            binding_epoch: 0,
             session_id: sid.clone(),
             subagent_id: "sa-1".into(),
             attempt_id: None,
-            outcome: SubagentKillOutcome::RpcFailed,
+            outcome: SubagentKillOutcome::RpcFailed { message: "Coordinator unavailable".into() },
         },
         &mut app,
     );
@@ -1019,13 +1018,14 @@ fn kill_rpc_failure_does_not_finalize_but_nothing_live_does() {
         "a failed cancel RPC must not finalize the row"
     );
 
-    // Nothing live means no finish is coming, so the pager finalizes the row
+    // A miss supplies no terminal evidence.
     dispatch_task_result(
         TaskResult::KillSubagentComplete {
+            binding_epoch: 0,
             session_id: sid,
             subagent_id: "sa-1".into(),
             attempt_id: None,
-            outcome: SubagentKillOutcome::NothingLive { status: None },
+            outcome: SubagentKillOutcome::NotFound,
         },
         &mut app,
     );
@@ -1033,15 +1033,13 @@ fn kill_rpc_failure_does_not_finalize_but_nothing_live_does() {
         expect_agent(&app, id)
             .subagent_sessions
             .get("child-1")
-            .is_some_and(|s| s.is_finished()),
-        "nothing-live must finalize the orphan row"
+            .is_some_and(|s| !s.is_finished() && !s.attempt.pending_kill),
+        "not-found must clear the request without fabricating a finish"
     );
 }
 
-/// An already-finished orphan's real terminal status (`NothingLive { status: Some(..) }`) is forwarded to the finalized row.
-/// It is not flattened to "cancelled".
 #[test]
-fn kill_nothing_live_with_status_stamps_real_terminal_status() {
+fn kill_status_without_terminal_evidence_does_not_fabricate_counters() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     let sid = acp::SessionId::new("test-session".to_owned());
@@ -1054,11 +1052,12 @@ fn kill_nothing_live_with_status_stamps_real_terminal_status() {
 
     dispatch_task_result(
         TaskResult::KillSubagentComplete {
+            binding_epoch: 0,
             session_id: sid,
             subagent_id: "sa-1".into(),
             attempt_id: None,
-            outcome: SubagentKillOutcome::NothingLive {
-                status: Some("completed".into()),
+            outcome: SubagentKillOutcome::AlreadyFinished {
+                status: "completed".into(),
             },
         },
         &mut app,
@@ -1066,15 +1065,10 @@ fn kill_nothing_live_with_status_stamps_real_terminal_status() {
     let Some(info) = expect_agent(&app, id).subagent_sessions.get("child-1") else {
         panic!("expected subagent child-1");
     };
-    assert!(
-        info.is_finished(),
-        "already-finished orphan must be finalized"
-    );
-    assert_eq!(
-        info.attempt.status.as_deref(),
-        Some("completed"),
-        "the shell's real terminal status must be stamped, not 'cancelled'"
-    );
+    assert!(!info.is_finished());
+    assert_eq!(info.attempt.status, None);
+    assert!(!info.attempt.pending_kill);
+    assert_eq!(info.attempt.terminal_entry_id, None);
 }
 
 #[test]
@@ -1118,10 +1112,11 @@ fn stale_kill_result_does_not_finish_replacement_attempt() {
 
     dispatch_task_result(
         TaskResult::KillSubagentComplete {
+            binding_epoch: 0,
             session_id: sid,
             subagent_id: "sa-1".into(),
             attempt_id: Some(first_attempt.into()),
-            outcome: SubagentKillOutcome::NothingLive { status: None },
+            outcome: SubagentKillOutcome::NotFound,
         },
         &mut app,
     );

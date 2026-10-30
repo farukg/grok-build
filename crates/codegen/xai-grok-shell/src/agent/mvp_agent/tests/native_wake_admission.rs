@@ -155,7 +155,17 @@ fn completed_native_worker_admits_human_bootstrap_once() {
     run_local_for_bridge_test(|| successful_wake(ActiveAgentMessageSource::Human));
 }
 
+#[derive(Clone, Copy)]
+enum WakeIngress {
+    Backend,
+    RestartAcp,
+}
+
 async fn successful_wake(source: ActiveAgentMessageSource) {
+    successful_wake_via(source, WakeIngress::Backend).await;
+}
+
+async fn successful_wake_via(source: ActiveAgentMessageSource, ingress: WakeIngress) {
     let server = xai_grok_test_support::MockInferenceServer::start()
         .await
         .unwrap();
@@ -208,6 +218,34 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
         before.hidden, None,
         "ordinary child history hiding is not an explicit retirement"
     );
+    let recovery = match ingress {
+        WakeIngress::Backend => None,
+        WakeIngress::RestartAcp => {
+            let Some(crate::agent::mvp_agent::SessionHost::Child(route)) = agent.session_host(&child) else {
+                panic!("native completion must retain the child route");
+            };
+            super::super::drain_persistence(&agent, &parent).await;
+            agent.resident_handle(&parent).unwrap().cmd_tx.send(crate::session::SessionCommand::Shutdown(crate::session::ShutdownKind::Graceful)).unwrap();
+            agent.remove_session(&parent);
+            let leader = xai_grok_tools::types::restart_recovery::LeaderRestartRecovery::stale(chrono::Utc::now());
+            agent.cfg.borrow_mut().leader_restart_recovery = leader.clone();
+            bounded(agent.load_session_inner(acp::LoadSessionRequest::new(parent.clone(), repository.clone()))).await.unwrap();
+            agent.register_child_session(&child, route);
+            let owner = leader.register(id.as_str(), before.created_at, before.completion_delivery.restart_admission);
+            assert!(!owner.admission().permits_recovery());
+            assert!(!leader.session(parent.0.as_ref()).admission().permits_recovery());
+            assert!(bounded(agent.resume_subagent(parent.0.as_ref(), &id, "generic resume is not a new child submission".into())).await.is_err());
+            let Some(crate::agent::mvp_agent::SessionHost::Child(ChildHost {
+                reach: ChildReach::Addressed { address, .. }, ..
+            })) = agent.session_host(&child) else { panic!("address retained"); };
+            assert!(matches!(bounded(backend.send_active_message(ActiveAgentMessageRequest::try_new_from_human(
+                address.as_str(), "old human source is not fresh authority",
+                xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation::Queue,
+            ).unwrap())).await, ActiveAgentMessageOutcome::NotActiveOrFinalizing));
+            assert!(!owner.admission().permits_recovery());
+            Some((leader, owner))
+        }
+    };
     let mut next = server.expect_response_blocked(
         "native wake bootstrap",
         InferenceRequestMatcher::foreground_containing(InferenceEndpoint::Responses, WAKE_TEXT),
@@ -238,7 +276,21 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
             ).unwrap()
         }
     };
-    let accepted = bounded(backend.send_active_message(message)).await;
+    let accepted = match ingress {
+        WakeIngress::Backend => bounded(backend.send_active_message(message)).await,
+        WakeIngress::RestartAcp => {
+            let response = bounded(acp::Agent::prompt(&agent, acp::PromptRequest::new(
+                child.clone(), vec![acp::ContentBlock::from(WAKE_TEXT)],
+            ))).await.unwrap();
+            let meta = response.meta.expect("ACP child wake receipt");
+            assert_eq!(meta["childWake"]["kind"], "accepted");
+            let message_id = meta["childWake"]["messageId"].as_str().unwrap().to_owned();
+            let (leader, owner) = recovery.as_ref().unwrap();
+            assert!(matches!(owner.admission(), xai_grok_tools::types::restart_recovery::RestartAdmission::Reactivated { .. }));
+            assert!(!leader.session(parent.0.as_ref()).admission().permits_recovery());
+            ActiveAgentMessageOutcome::Accepted { message_id }
+        }
+    };
     let ActiveAgentMessageOutcome::Accepted { message_id } = accepted else {
         panic!("native wake did not commit: {accepted:?}");
     };
@@ -247,6 +299,16 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
         "receipt uses the bare message identity"
     );
     let delivery_id = format!("parent-message/{message_id}");
+    if let Some((leader, owner)) = &recovery {
+        let native = agent.resident_handle(&child).expect("native wake installed the addressed child");
+        assert_eq!(native.tool_context.restart_recovery.admission(), owner.admission());
+        assert!(std::sync::Arc::ptr_eq(&native.tool_context.restart_recovery.activation, &owner.activation));
+        assert!(!leader.session(parent.0.as_ref()).admission().permits_recovery());
+        let mut unrelated = auto_wake_test_request(&uuid::Uuid::now_v7().to_string());
+        unrelated.parent_session_id = parent.0.to_string();
+        unrelated.prompt = "the child submission must not reopen unrelated parent work".into();
+        assert!(bounded(backend.spawn(unrelated, None, None)).await.unwrap().is_interrupted());
+    }
     let admitted = storage.load_summary(&info).await.unwrap();
     let record = admitted
         .completion_delivery
@@ -312,7 +374,7 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
     );
     next.release();
     let completed = bounded(backend.query(&id, true, Some(30_000), None))
-        .await
+        .await.expect("query acknowledgement")
         .unwrap();
     assert!(
         matches!(completed.status, SubagentSnapshotStatus::Completed { ref output, .. }
@@ -433,6 +495,11 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
     );
 }
 
+#[path = "restart_native_submission.rs"]
+mod restart_native_submission;
+#[path = "restart_disk_submission.rs"]
+mod restart_disk_submission;
+
 #[test]
 fn completed_native_worker_receiver_contention_is_unconfirmed_without_model_input() {
     xai_test_utils::require_git!();
@@ -528,7 +595,7 @@ fn completed_native_worker_receiver_contention_is_unconfirmed_without_model_inpu
             format!("{:x}", Sha256::digest(WAKE_TEXT.as_bytes()))
         );
         let restored = bounded(backend.query(&id, true, Some(30_000), None))
-            .await
+            .await.expect("query acknowledgement")
             .unwrap();
         assert!(
             matches!(restored.status, SubagentSnapshotStatus::Completed { ref output, .. }

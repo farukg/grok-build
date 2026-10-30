@@ -244,6 +244,8 @@ pub struct SubagentRuntimeOverrides {
     pub output_token_budget: Option<u64>,
     pub output_schema: Option<serde_json::Value>,
     pub loop_task_id: Option<String>,
+    #[serde(skip)]
+    pub child_submission: super::coordinator::child_submission::ChildSubmission,
 }
 
 /// Re-export of [`xai_tool_types::is_not_sentinel`] for existing call sites.
@@ -650,6 +652,7 @@ pub struct SubagentSnapshot {
 #[derive(Debug, Clone)]
 pub struct SubagentInspection {
     pub snapshot: SubagentSnapshot,
+    pub terminal: Option<super::terminal::SubagentTerminal>,
     pub parent_session_id: String,
     pub child_session_id: String,
     pub fork_parent_prompt_id: Option<String>,
@@ -753,10 +756,25 @@ pub enum ChildCancellation {
     Authorized,
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubagentCancelBinding {
+    #[default]
+    Current,
+    Observed { attempt_id: Option<String> },
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum SubagentAccessError {
+    #[error("Subagent request not confirmed: coordinator unavailable or response lost")]
+    CoordinatorUnavailable,
+}
+
 #[derive(Debug, Clone)]
 pub enum SubagentCancelTarget {
     SubagentId {
         id: String,
+        binding: SubagentCancelBinding,
         actor: SubagentActor,
         disposition: SubagentCancelDisposition,
     },
@@ -803,6 +821,7 @@ pub enum SubagentCancelOutcome {
     Cancelled { cause: InterruptionCause },
     AlreadyFinished { state: SubagentState },
     NotFound,
+    CustodyUnavailable { target_id: String },
 }
 
 /// Summary of a finished subagent, used for between-turn delivery and the auto-wake prompt.
@@ -1102,6 +1121,16 @@ pub struct SubagentDescribeRequest {
 
 /// Coordinator message enum. Kept exhaustive so every actor command is handled.
 pub enum SubagentEvent {
+    ReserveChildSubmission {
+        parent_session_id: String,
+        child_session_id: String,
+        prompt: String,
+        respond_to: oneshot::Sender<Result<super::coordinator::child_submission::ChildSubmissionAuthority, ActiveAgentMessageOutcome>>,
+    },
+    QuiesceRestartChildren {
+        parent_session_id: String,
+        respond_to: oneshot::Sender<SubagentCancelOutcome>,
+    },
     RecoverMessage(super::native_recovery::SubagentMessageRecoveryRequest),
     Spawn(SubagentSpawnRequest),
     Query(SubagentQueryRequest),

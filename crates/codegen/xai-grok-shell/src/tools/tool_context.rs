@@ -185,6 +185,7 @@ pub(crate) fn subagent_foreground_wait(
 /// Session-level context. NOT used for tool execution (bridge handles that).
 #[derive(Clone)]
 pub struct ToolContext {
+    pub restart_recovery: xai_grok_tools::types::restart_recovery::SessionRestartRecovery,
     pub gateway: Option<GatewaySender>,
     pub session_id: Option<acp::SessionId>,
     pub fs: AsyncFsWrapper,
@@ -319,6 +320,7 @@ impl ToolContext {
         session_env: HashMap<String, String>,
     ) -> Self {
         Self {
+            restart_recovery: Default::default(),
             gateway,
             session_id,
             fs: AsyncFsWrapper::new(fs),

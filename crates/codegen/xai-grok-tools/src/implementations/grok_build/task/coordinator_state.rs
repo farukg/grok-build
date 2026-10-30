@@ -1303,6 +1303,7 @@ pub(super) fn running_inspection(
     progress: SubagentProgress,
 ) -> SubagentInspection {
     SubagentInspection {
+        terminal: None,
         snapshot: SubagentSnapshot {
             subagent_id: seed.subagent_id,
             description: seed.description,
@@ -1341,6 +1342,7 @@ pub(super) fn pending_snapshot(child: &PendingChild) -> SubagentSnapshot {
 
 pub(super) fn pending_inspection(child: &PendingChild) -> SubagentInspection {
     SubagentInspection {
+        terminal: None,
         snapshot: pending_snapshot(child),
         parent_session_id: child.request.parent_session_id.clone(),
         child_session_id: String::new(),
@@ -1373,6 +1375,7 @@ pub(super) fn queued_inspection(
     queued_at: std::time::Instant,
 ) -> SubagentInspection {
     SubagentInspection {
+        terminal: None,
         snapshot: queued_snapshot(request, queued_at),
         parent_session_id: request.parent_session_id.clone(),
         child_session_id: String::new(),
@@ -1454,6 +1457,20 @@ pub(super) fn completed_inspection(
     persisted_output: Option<&str>,
 ) -> SubagentInspection {
     SubagentInspection {
+        terminal: if child.persisted_output_ref.is_some() && persisted_output.is_none() {
+            None
+        } else {
+            match &child.publication {
+                TerminalPublicationState::Publishing | TerminalPublicationState::Published => {
+                    super::terminal::SubagentTerminal::from_result(
+                        &child.attempt_id, &child.result, persisted_output,
+                    )
+                }
+                TerminalPublicationState::Committing
+                | TerminalPublicationState::Rejected { .. }
+                | TerminalPublicationState::HistoryBlocked { .. } => None,
+            }
+        },
         snapshot: completed_snapshot(child, persisted_output),
         parent_session_id: child.request.parent_session_id.clone(),
         child_session_id: child.child_session_id.clone(),

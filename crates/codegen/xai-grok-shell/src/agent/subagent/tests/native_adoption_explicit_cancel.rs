@@ -26,6 +26,7 @@ async fn stop(
         SubagentCancelDisposition::Stop,
     ))
     .await
+    .expect("cancel acknowledgement")
 }
 
 async fn receiver_detached(f: &Fixture) {
@@ -77,7 +78,7 @@ async fn cancelled_reopen_cannot_execute(
     }
     assert!(
         bounded(backend.query(&f.reference.receiver.session_id, false, None, None))
-            .await
+            .await.expect("query acknowledgement")
             .is_none()
     );
     assert_eq!(f.server.request_count(), sampled);
@@ -152,7 +153,7 @@ async fn cancel_released_adoption(caller: ReleasedCancel) {
                         Some(30_000),
                         None,
                     ))
-                    .await
+                    .await.expect("query acknowledgement")
                     .unwrap();
                     assert!(matches!(
                         result.status,
@@ -163,7 +164,7 @@ async fn cancel_released_adoption(caller: ReleasedCancel) {
                     bounded(async {
                         while let Some(snapshot) = backend
                             .query(&f.reference.receiver.session_id, false, None, None)
-                            .await
+                            .await.expect("query acknowledgement")
                         {
                             match snapshot.status {
                                 SubagentSnapshotStatus::Initializing
@@ -406,7 +407,7 @@ async fn released_attempt_end(ordering: ReleasedEndOrdering) {
             };
             let snapshot =
                 bounded(backend.query(&f.reference.receiver.session_id, false, None, None))
-                    .await
+                    .await.expect("query acknowledgement")
                     .unwrap();
             assert!(matches!(
                 snapshot.status,
@@ -439,7 +440,7 @@ async fn released_attempt_end(ordering: ReleasedEndOrdering) {
                         Some(30_000),
                         None,
                     ))
-                    .await
+                    .await.expect("query acknowledgement")
                     .unwrap();
                     assert!(matches!(
                         result.status,
@@ -450,7 +451,7 @@ async fn released_attempt_end(ordering: ReleasedEndOrdering) {
                     bounded(async {
                         while let Some(snapshot) = backend
                             .query(&f.reference.receiver.session_id, false, None, None)
-                            .await
+                            .await.expect("query acknowledgement")
                         {
                             match snapshot.status {
                                 SubagentSnapshotStatus::Initializing

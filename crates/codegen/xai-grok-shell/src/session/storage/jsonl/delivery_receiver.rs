@@ -393,6 +393,9 @@ impl JsonlStorageAdapter {
             }
             let _chat_lock = Self::lock_append(&storage.chat_file(&info))?;
             mutate_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), |summary| {
+                if !summary.completion_delivery.restart_admission.permits_recovery() {
+                    return Err(io::Error::new(io::ErrorKind::PermissionDenied, "receiver awaits a new user message after stale restart"));
+                }
                 if summary.hidden == Some(true) {
                     return Err(io::Error::new(io::ErrorKind::PermissionDenied, "parent admission requires a live session"));
                 }
@@ -601,6 +604,9 @@ impl JsonlStorageAdapter {
                         &storage.summary_file(&info),
                         &storage.summary_lock_file(&info),
                         |summary| {
+                            if !summary.completion_delivery.restart_admission.permits_recovery() {
+                                return Ok(DeliveryResult::Rejected { reason: "receiver awaits a new user message after stale restart".into() });
+                            }
                             storage.reconcile_delivery_terminals(
                                 &info,
                                 summary,

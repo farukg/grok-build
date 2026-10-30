@@ -1555,6 +1555,35 @@ impl StorageAdapter for JsonlStorageAdapter {
             .map_err(io::Error::other)?
     }
 
+    async fn set_restart_admission(
+        &self,
+        info: &Info,
+        admission: xai_grok_tools::types::restart_recovery::RestartAdmission,
+        access: crate::session::receiver_execution::ReceiverAccess<'_>,
+    ) -> io::Result<()> {
+        use crate::session::receiver_execution::ReceiverAccess;
+        let lease = match access {
+            ReceiverAccess::Owner(lease) if lease.session_id == info.id.to_string() => lease.retain(),
+            ReceiverAccess::Owner(_) | ReceiverAccess::Observe => {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "restart cancellation requires receiver execution owner"));
+            }
+        };
+        let storage = self.clone();
+        let info = info.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            let _chat_lock = Self::lock_append(&storage.chat_file(&info))?;
+            crate::session::storage::summary_write::apply_patch_locked(
+                &storage.summary_file(&info),
+                &storage.summary_lock_file(&info),
+                &crate::session::storage::summary_write::SummaryPatch {
+                    restart_admission: Some(admission),
+                    ..Default::default()
+                },
+            ).map(|_| ())
+        }).await.map_err(io::Error::other)?
+    }
+
     async fn suppress_terminal_completions(
         &self,
         info: &Info,

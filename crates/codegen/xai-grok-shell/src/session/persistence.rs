@@ -240,6 +240,12 @@ pub struct SessionStateCopy {
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum PersistenceMsg {
+    ReadTurnTerminal {
+        prompt_id: String,
+        respond_to: tokio::sync::oneshot::Sender<
+            io::Result<Option<crate::extensions::notification::SessionNotification>>,
+        >,
+    },
     ReadPublishedRequestSources {
         respond_to: tokio::sync::oneshot::Sender<
             io::Result<Vec<xai_grok_sampling_types::SourceOccurrenceId>>,
@@ -339,6 +345,10 @@ pub enum PersistenceMsg {
         respond_to: tokio::sync::oneshot::Sender<
             io::Result<Vec<super::delivery_receiver::DeliveryReceipt>>,
         >,
+    },
+    SetRestartAdmission {
+        admission: xai_grok_tools::types::restart_recovery::RestartAdmission,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
     },
     SuppressTerminalCompletions {
         ids: Vec<xai_chat_state::completion::CompletionIdentity>,
@@ -2415,6 +2425,26 @@ impl SessionPersistence {
                 spawn_worktree_touch(&self.info);
             }
             match msg {
+                PersistenceMsg::ReadTurnTerminal { prompt_id, respond_to } => {
+                    let result = async {
+                        self.flush_and_sync().await?;
+                        let updates = match self.storage.updates_file_path(&self.info) {
+                            Some(path) => tokio::task::spawn_blocking(move || {
+                                match super::storage::UpdatesIterator::open(&path)? {
+                                    Some(updates) => updates.collect::<io::Result<Vec<_>>>(),
+                                    None => Ok(Vec::new()),
+                                }
+                            }).await.map_err(io::Error::other)??,
+                            None => self.storage.load_session(&self.info).await?.updates,
+                        };
+                        Ok(super::commands::find_turn_terminal(
+                            updates,
+                            self.info.id.0.as_ref(),
+                            &prompt_id,
+                        ))
+                    }.await;
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::ReadPublishedRequestSources { respond_to } => {
                     let _ = respond_to.send(self.read_published_request_sources().await);
                 }
@@ -2734,6 +2764,17 @@ impl SessionPersistence {
                     if result.is_ok() {
                         super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::ProducerPublished);
                     }
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::SetRestartAdmission { admission, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => match self.claim_receiver().await {
+                            Ok(_) => self.storage.set_restart_admission(&self.info, admission, self.receiver_owner.access()).await,
+                            Err(error) => Err(error),
+                        },
+                        Err(error) => Err(error),
+                    };
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
@@ -3686,6 +3727,19 @@ pub(crate) async fn new_with_explicit_dir(
     session_summary_model: String,
     open: ExplicitSessionOpen,
 ) -> io::Result<PersistenceHandle> {
+    new_with_explicit_dir_recovery(info, target_dir, model_id, sampling_client, session_summary_model, open,
+        &Default::default()).await.map(|(handle, _)| handle)
+}
+
+pub(crate) async fn new_with_explicit_dir_recovery(
+    info: &Info,
+    target_dir: PathBuf,
+    model_id: acp::ModelId,
+    sampling_client: OaiCompatClient,
+    session_summary_model: String,
+    open: ExplicitSessionOpen,
+    leader: &xai_grok_tools::types::restart_recovery::LeaderRestartRecovery,
+) -> io::Result<(PersistenceHandle, xai_grok_tools::types::restart_recovery::SessionRestartRecovery)> {
     let storage = JsonlStorageAdapter::with_explicit_session_dir(target_dir);
     #[cfg(test)]
     let fault = match &open {
@@ -3761,6 +3815,11 @@ pub(crate) async fn new_with_explicit_dir(
         summary.next_trace_turn = next_trace_turn;
     }
 
+    let recovery = leader.register(info.id.0.as_ref(), summary.created_at, summary.completion_delivery.restart_admission);
+    let activation = recovery.activation.lock().await;
+    let admission = recovery.admission();
+    let persisted_admission = summary.completion_delivery.restart_admission;
+
     let (handle, rx, summary_tx, disk_full_tx) = actor_channel();
 
     let mut summary_gen =
@@ -3803,7 +3862,14 @@ pub(crate) async fn new_with_explicit_dir(
 
     #[cfg(test)]
     let handle = native_wake_tests_support::configure_transport(handle, fault);
-    Ok(handle)
+    if admission != persisted_admission {
+        let (respond_to, response) = oneshot::channel();
+        handle.tx.send(PersistenceMsg::SetRestartAdmission { admission, respond_to })
+            .map_err(|_| io::Error::other("native restart admission owner closed"))?;
+        response.await.map_err(|_| io::Error::other("native restart admission acknowledgement lost"))??;
+    }
+    drop(activation);
+    Ok((handle, recovery))
 }
 
 /// Restore payload without updates in memory, for streaming replay.

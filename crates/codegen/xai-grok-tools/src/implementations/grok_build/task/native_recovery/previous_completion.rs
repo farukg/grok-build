@@ -72,6 +72,8 @@ impl PreviousCompletion {
     pub(in crate::implementations::grok_build::task) fn capture(child: &CompletedChild) -> Self {
         let request = &child.request;
         let result = &child.result;
+        let mut runtime_overrides = request.runtime_overrides.clone();
+        runtime_overrides.child_submission = Default::default();
         Self {
             attempt_id: child.attempt_id.to_string(),
             request: PreviousRequest {
@@ -81,7 +83,7 @@ impl PreviousCompletion {
                 parent_prompt_id: request.parent_prompt_id.clone(),
                 resume_from: request.resume_from.clone(),
                 cwd: request.cwd.clone(),
-                runtime_overrides: request.runtime_overrides.clone(),
+                runtime_overrides,
                 run_in_background: request.run_in_background,
                 surface_completion: request.surface_completion,
                 await_to_completion: request.await_to_completion,

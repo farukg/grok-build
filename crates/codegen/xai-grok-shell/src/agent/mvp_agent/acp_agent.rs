@@ -2033,7 +2033,7 @@ impl acp::Agent for MvpAgent {
                         history,
                         trigger: cancel_trigger,
                         user_initiated,
-                        target_prompt_id,
+                        target_prompt_id: target_prompt_id.map(crate::session::CancelTarget::Prompt),
                         ..Default::default()
                     }),
                 );
@@ -2092,6 +2092,42 @@ impl acp::Agent for MvpAgent {
         let mut backend_no_bridge_err: Option<acp::Error> = None;
         let method = args.method.clone();
         let result = match method.as_ref() {
+            crate::session::CANCEL_SETTLEMENT_METHOD => {
+                let request: crate::session::WakeCancelRequest =
+                    crate::extensions::parse_params(&args)?;
+                let sid = acp::SessionId::new(request.context.binding.session_id.clone());
+                let handle = self.session_handle_waiting_for_load(&sid).await;
+                let (respond_to, mut response) = tokio::sync::mpsc::unbounded_channel();
+                let reason = match handle {
+                    Some(handle) => {
+                        let sent = handle.cmd_tx.send(SessionCommand::Cancel(
+                            crate::session::CancelOptions {
+                                cancel_subagents: request.cancel_subagents,
+                                trigger: request.trigger.as_deref()
+                                    .map(crate::session::CancelTrigger::from_client),
+                                user_initiated: true,
+                                target_prompt_id: Some(crate::session::CancelTarget::Wake {
+                                    request: request.clone(),
+                                    respond_to,
+                                }),
+                                ..Default::default()
+                            },
+                        ));
+                        if sent.is_ok() {
+                            if let Some(response) = response.recv().await {
+                                return crate::extensions::to_raw_response(&response);
+                            }
+                        }
+                        crate::session::WakeCancelFailure::ActorUnavailable
+                    }
+                    None => crate::session::WakeCancelFailure::SessionUnavailable,
+                };
+                crate::extensions::to_raw_response(&crate::session::WakeCancelResponse {
+                    context: request.context,
+                    prompt_id: request.prompt_id,
+                    settlement: crate::session::WakeCancelSettlement::Unresolved { reason },
+                })
+            }
             crate::session::current_actions::CAPABILITY => {
                 crate::extensions::current_actions::handle(self, &args)
             }

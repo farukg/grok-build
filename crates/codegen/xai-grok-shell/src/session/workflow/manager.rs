@@ -23,7 +23,7 @@ use super::host_service::{
 use super::notify::WorkflowNotifySender;
 use super::registry::{ResolvedWorkflow, WorkflowSource, bundled_file_is_managed};
 use super::store::WorkflowRunStore;
-use super::tracker::{WorkflowRunState, WorkflowRunStatus, WorkflowTracker};
+use super::tracker::{WorkflowCancellation, WorkflowRunState, WorkflowRunStatus, WorkflowTracker};
 use crate::agent::remote_config::task_model_policy::LatchedTaskModelSelection;
 
 pub(crate) const WORKFLOW_MAX_ACTIVE_RUNS_PER_SESSION: usize = 4;
@@ -662,7 +662,17 @@ impl WorkflowManager {
     }
 
     pub(crate) fn cancel(&mut self, run_id: &str) -> bool {
-        if self.reap_if_terminal(run_id) {
+        self.cancel_scoped(run_id, WorkflowCancellation::Normal)
+    }
+
+    pub(crate) fn cancel_stale_restart(&mut self, run_id: &str) -> bool {
+        self.cancel_scoped(run_id, WorkflowCancellation::StaleRestart)
+    }
+
+    fn cancel_scoped(&mut self, run_id: &str, scope: WorkflowCancellation) -> bool {
+        let interrupted_restart = scope == WorkflowCancellation::StaleRestart
+            && self.tracker.lock().get(run_id).is_some_and(|state| state.status == WorkflowRunStatus::Interrupted);
+        if !interrupted_restart && self.reap_if_terminal(run_id) {
             return false;
         }
         if let Some(run) = self.active.remove(run_id) {
@@ -672,8 +682,11 @@ impl WorkflowManager {
             let state = {
                 let mut tracker = self.tracker.lock();
                 match tracker.get(run_id) {
-                    Some(state) if !state.status.is_terminal() => {
-                        tracker.apply_outcome(run_id, &WorkflowOutcome::Cancelled)
+                    Some(state) if !state.status.is_terminal() || interrupted_restart => {
+                        match scope {
+                            WorkflowCancellation::Normal => tracker.apply_outcome(run_id, &WorkflowOutcome::Cancelled),
+                            WorkflowCancellation::StaleRestart => tracker.cancel_stale_restart(run_id),
+                        }
                     }
                     _ => None,
                 }
@@ -694,8 +707,11 @@ impl WorkflowManager {
         let state = {
             let mut tracker = self.tracker.lock();
             match tracker.get(run_id) {
-                Some(state) if !state.status.is_terminal() => {
-                    tracker.apply_outcome(run_id, &WorkflowOutcome::Cancelled)
+                Some(state) if !state.status.is_terminal() || interrupted_restart => {
+                    match scope {
+                        WorkflowCancellation::Normal => tracker.apply_outcome(run_id, &WorkflowOutcome::Cancelled),
+                        WorkflowCancellation::StaleRestart => tracker.cancel_stale_restart(run_id),
+                    }
                 }
                 _ => None,
             }

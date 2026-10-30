@@ -14,6 +14,12 @@ use super::{ChildControl, ChildRunner, SubagentCoordinator, SubagentProgress};
 
 const DEFAULT_QUERY_BLOCK_TIMEOUT_MS: u64 = 30_000;
 
+enum QueryOutput {
+    Resident,
+    Loaded(Arc<str>),
+    Unavailable,
+}
+
 impl<R: ChildRunner> SubagentCoordinator<R> {
     pub(super) fn observe_callers(&self) {
         for (id, child) in &self.active {
@@ -146,22 +152,34 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
     }
 
-    fn persisted_output(&self, child: &CompletedChild) -> Option<Arc<str>> {
-        child.persisted_output_ref.as_deref().map(|reference| {
-            self.runner
-                .load_persisted_output(reference)
-                .unwrap_or_else(|| Arc::from(OUTPUT_UNAVAILABLE_PLACEHOLDER))
-        })
+    fn persisted_output(&self, child: &CompletedChild) -> QueryOutput {
+        match child.persisted_output_ref.as_deref() {
+            None => QueryOutput::Resident,
+            Some(reference) => match self.runner.load_persisted_output(reference) {
+                Some(output) => QueryOutput::Loaded(output),
+                None => QueryOutput::Unavailable,
+            },
+        }
     }
 
     pub(super) fn completed_snapshot_for_query(&self, child: &CompletedChild) -> SubagentSnapshot {
-        let output = self.persisted_output(child);
-        completed_snapshot(child, output.as_deref())
+        match self.persisted_output(child) {
+            QueryOutput::Resident => completed_snapshot(child, None),
+            QueryOutput::Loaded(output) => completed_snapshot(child, Some(&output)),
+            QueryOutput::Unavailable => completed_snapshot(child, Some(OUTPUT_UNAVAILABLE_PLACEHOLDER)),
+        }
     }
 
     fn completed_inspection_for_query(&self, child: &CompletedChild) -> SubagentInspection {
-        let output = self.persisted_output(child);
-        completed_inspection(child, output.as_deref())
+        match self.persisted_output(child) {
+            QueryOutput::Resident => completed_inspection(child, None),
+            QueryOutput::Loaded(output) => completed_inspection(child, Some(&output)),
+            QueryOutput::Unavailable => {
+                let mut inspection = completed_inspection(child, Some(OUTPUT_UNAVAILABLE_PLACEHOLDER));
+                inspection.terminal = None;
+                inspection
+            }
+        }
     }
 
     pub(super) fn ready_snapshot(&self, id: &str) -> Option<SubagentSnapshot> {

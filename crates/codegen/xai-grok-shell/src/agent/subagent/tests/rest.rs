@@ -1463,7 +1463,26 @@ fn running_test_meta(id: &str, parent_session_id: &str) -> SubagentMeta {
     }
 }
 fn inspection(id: &str, status: SubagentSnapshotStatus) -> SubagentInspection {
+    let terminal = match &status {
+        SubagentSnapshotStatus::Completed { output, tool_calls, turns, .. } => Some(
+            xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminal {
+                attempt_id: "attempt".to_string(),
+                state: xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminalState::Completed,
+                output: std::sync::Arc::from(output.as_str()),
+                tool_calls: *tool_calls,
+                turns: *turns,
+                duration_ms: 50,
+                tokens_used: 0,
+            },
+        ),
+        SubagentSnapshotStatus::Initializing
+        | SubagentSnapshotStatus::Running { .. }
+        | SubagentSnapshotStatus::Finalizing { .. }
+        | SubagentSnapshotStatus::Failed { .. }
+        | SubagentSnapshotStatus::Cancelled { .. } => None,
+    };
     SubagentInspection {
+        terminal,
         snapshot: SubagentSnapshot {
             subagent_id: id.to_string(),
             description: "task".to_string(),
@@ -1562,6 +1581,32 @@ async fn live_reconcile_with_heal_lock(
     drop(backend);
     let _ = respond.await;
 }
+#[tokio::test]
+async fn reconcile_preserves_meta_when_completed_snapshot_has_no_terminal_evidence() {
+    let session_dir = tempfile::TempDir::new().unwrap();
+    let id = "sa-output-unavailable";
+    let sub_dir = session_dir.path().join("subagents").join(id);
+    write_subagent_meta(&sub_dir, &running_test_meta(id, "parent-x"));
+    let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+    let mut observed = inspection(id, SubagentSnapshotStatus::Completed {
+        output: "output unavailable".to_string(),
+        tool_calls: 7,
+        turns: 2,
+        worktree_path: None,
+    });
+    observed.terminal = None;
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+    reconcile_with_inspections(
+        &[],
+        HashMap::from([(id.to_string(), Some(observed))]),
+        session_dir.path(),
+        &test_gateway(),
+        Some(&cmd_tx),
+    ).await;
+    assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+    assert!(cmd_rx.try_recv().is_err());
+}
+
 #[tokio::test]
 async fn reconcile_orphan_flips_running_meta_to_cancelled() {
     use crate::test_support::lsp_runtime::test_gateway_with_receiver;

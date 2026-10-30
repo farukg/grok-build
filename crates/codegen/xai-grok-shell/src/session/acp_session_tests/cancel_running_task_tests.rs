@@ -2140,11 +2140,6 @@ async fn ctrl_c_clears_turn_active_before_background_completion_routes() {
         })
         .await;
 }
-/// A cancel that names its target (a streaming wake turn) must resolve a queued wake row the
-/// anonymous path leaves alone: admitted behind a running turn, it survives every cancel arm and
-/// would run later against a client that already shows Idle. The named row is removed and its
-/// producer resolved `RemovedFromQueue`; unrelated queued rows keep the interactive-cancel
-/// preservation contract.
 #[tokio::test(flavor = "current_thread")]
 async fn named_target_cancel_removes_queued_wake_row() {
     use tokio::sync::oneshot::error::TryRecvError;
@@ -2178,14 +2173,16 @@ async fn named_target_cancel_removes_queued_wake_row() {
                     cancel_subagents: true,
                     trigger: Some(crate::session::CancelTrigger::CtrlC),
                     user_initiated: true,
-                    target_prompt_id: Some("task-completed-bg-queued".to_string()),
+                    target_prompt_id: Some(crate::session::CancelTarget::Prompt("task-completed-bg-queued".to_string())),
                     ..Default::default()
                 })
                 .await;
             assert!(
-                outcome.turn_stopped,
-                "the named wake row must not dilute the running turn's teardown"
+                !outcome.turn_stopped,
+                "a named queued wake has no authority over the running user turn"
             );
+            assert_eq!(outcome.barrier, super::cancel::WakeBarrier::Clear);
+            assert!(!actor.state.lock().await.notifications_suppressed);
             {
                 let state = actor.state.lock().await;
                 let remaining: Vec<&str> = state
@@ -2195,8 +2192,8 @@ async fn named_target_cancel_removes_queued_wake_row() {
                     .collect();
                 assert_eq!(
                     remaining,
-                    vec!["user-next"],
-                    "the named wake row is removed; the unrelated user row is preserved"
+                    vec!["user-running", "user-next"],
+                    "only the named wake row may be removed"
                 );
             }
             assert!(
@@ -2213,15 +2210,23 @@ async fn named_target_cancel_removes_queued_wake_row() {
                 matches!(queued_user_rx.try_recv(), Err(TryRecvError::Empty)),
                 "the preserved user row must stay pending"
             );
-            assert!(
-                matches!(
-                    running_rx.try_recv(),
-                    Ok(Ok(crate::session::commands::PromptTurnOk {
-                        stop_reason: acp::StopReason::Cancelled,
-                        ..
-                    }))
-                ),
-                "the running turn still resolves Cancelled through the normal teardown"
+            assert!(matches!(running_rx.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(
+                actor.state.lock().await.running_task.as_ref().map(|task| task.prompt_id.as_str()),
+                Some("user-running"),
+            );
+            let repeated = actor.cancel_running_task(crate::session::CancelOptions {
+                cancel_subagents: true,
+                trigger: Some(crate::session::CancelTrigger::CtrlC),
+                user_initiated: true,
+                target_prompt_id: Some(crate::session::CancelTarget::Prompt("task-completed-bg-queued".to_string())),
+                ..Default::default()
+            }).await;
+            assert!(!repeated.turn_stopped);
+            assert!(matches!(running_rx.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(
+                actor.state.lock().await.running_task.as_ref().map(|task| task.prompt_id.as_str()),
+                Some("user-running"),
             );
         })
         .await;
@@ -2237,14 +2242,14 @@ async fn named_target_cancel_of_finished_wake_arms_barrier_without_terminal() {
             let (gateway_tx, _gateway_rx) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             let (persistence_tx, mut persistence_rx) =
-                tokio::sync::unbounded_channel::<PersistenceMsg>();
+                tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
             let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
             let outcome = actor
                 .cancel_running_task(crate::session::CancelOptions {
                     cancel_subagents: true,
                     trigger: Some(crate::session::CancelTrigger::CtrlC),
                     user_initiated: true,
-                    target_prompt_id: Some("task-completed-already-finished".to_string()),
+                    target_prompt_id: Some(crate::session::CancelTarget::Prompt("task-completed-already-finished".to_string())),
                     ..Default::default()
                 })
                 .await;

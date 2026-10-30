@@ -4,6 +4,8 @@ use super::parent_message::{
     ParentTeardownRequest, ParentTeardownStatus, parent_teardown_uncertain,
 };
 use super::*;
+#[path = "cancel_settlement.rs"]
+mod settlement;
 use xai_grok_tools::implementations::grok_build::task::coordinator::ChildCancellation;
 
 /// Whether the post-cancel notification drain stays suppressed: rewind and non-stop cancels clear it, a stop gesture arms it.
@@ -308,7 +310,7 @@ impl SessionActor {
             .await
     }
 
-    pub(super) async fn cancel_running_task_with_parent_teardown(
+    async fn cancel_running_task_inner(
         &self,
         options: crate::session::CancelOptions,
         parent_request: ParentTeardownRequest,
@@ -317,6 +319,31 @@ impl SessionActor {
             .trigger
             .as_ref()
             .map(crate::session::CancelTrigger::kind);
+        if matches!(options.history, crate::session::CancelHistoryDisposition::Keep)
+            && let Some(target) = options.target_prompt_id.as_deref()
+        {
+            let mut state = self.state.lock().await;
+            if !Self::is_running_prompt(&state, target) {
+                if let Some(pos) = state.pending_inputs.iter().position(|item| item.prompt_id == target) {
+                    Self::remove_pending_row(&mut state, pos);
+                    self.current_actions.remember_removed_wake(target);
+                    self.broadcast_queue_changed(&state);
+                }
+                let idle = state.running_task.is_none();
+                drop(state);
+                let barrier = if idle && kind == Some(crate::session::CancelKind::StopGesture) {
+                    self.arm_wake_barrier(options.trigger.as_ref());
+                    WakeBarrier::Armed
+                } else {
+                    WakeBarrier::Clear
+                };
+                return CancelOutcome {
+                    barrier,
+                    turn_stopped: false,
+                    settled: false,
+                };
+            }
+        }
         let owns_maintenance = matches!(
             &*self.compaction.cancel.manual_worker.borrow(),
             crate::session::compaction_config::ManualCompactWorker::Running(_)
@@ -531,32 +558,6 @@ impl SessionActor {
                 )
                 .await;
         }
-        // A non-rewind cancel names the turn it targets (a streaming wake turn). A named target
-        // that is queued but not running — admitted behind the running turn, or waiting at the
-        // front for the slot — would otherwise survive every cancel path and run later against a
-        // client that shows Idle; remove it like the rewind rail's queued rows. A named target
-        // that is neither queued nor running belongs to a turn that already ended: the StopGesture
-        // barrier below is its resolution, never a second terminal for an already-terminal turn.
-        if !rewind_requested
-            && let Some(target) = target_prompt_id.as_deref()
-        {
-            let mut state = self.state.lock().await;
-            if !Self::is_running_prompt(&state, target)
-                && let Some(pos) = state
-                    .pending_inputs
-                    .iter()
-                    .position(|item| item.prompt_id == target)
-            {
-                Self::remove_pending_row(&mut state, pos);
-                self.broadcast_queue_changed(&state);
-                drop(state);
-                xai_grok_telemetry::unified_log::info(
-                    "shell.cancel.named_target_removed",
-                    Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!({ "prompt_id": target })),
-                );
-            }
-        }
         let child_cancellation = match trigger.as_ref() {
             Some(crate::session::CancelTrigger::Shutdown) => ChildCancellation::Shutdown,
             Some(
@@ -574,6 +575,11 @@ impl SessionActor {
             CancelFinalization::Rewind
         } else {
             let mut state = self.state.lock().await;
+            if target_prompt_id.as_deref().is_some_and(|target| {
+                !Self::is_running_prompt(&state, target)
+            }) {
+                return CancelOutcome::noop();
+            }
             let Some(lease) = state.claim_cancel_finalization() else {
                 return CancelOutcome::noop();
             };

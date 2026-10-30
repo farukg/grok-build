@@ -391,6 +391,58 @@
     }
 
     #[test]
+    fn ongoing_wake_accepts_each_chunk_until_backend_terminal() {
+        let mut app = make_app_with_agent("sess-wake");
+        for _ in 0..3 {
+            assert!(handle(
+                make_viewer_chunk_with_turn_start("sess-wake", "task-completed-bg1", 5_000),
+                &mut app,
+            ), "an admitted, still-running wake must keep delivering output");
+        }
+        let _ = handle_ext_notification(
+            &xai_wake_turn_completed_notif("sess-wake", "task-completed-bg1", None),
+            &mut app,
+        );
+        assert!(!handle(
+            make_viewer_chunk_with_turn_start("sess-wake", "task-completed-bg1", 5_000),
+            &mut app,
+        ));
+        assert!(app.agents.get(&AgentId(0)).unwrap().running_wake_turn.is_none());
+    }
+
+    #[test]
+    fn previous_wake_terminal_cannot_close_successor_output() {
+        use crate::app::agent_view::test_fixtures::count_turn_markers;
+        let mut app = make_app_with_agent("sess-wake");
+        let _ = handle(
+            make_viewer_chunk_with_turn_start("sess-wake", "task-completed-bg1", 5_000),
+            &mut app,
+        );
+        let _ = handle_ext_notification(
+            &xai_wake_turn_completed_notif("sess-wake", "task-completed-bg1", None),
+            &mut app,
+        );
+        let _ = handle(
+            make_viewer_chunk_with_turn_start("sess-wake", "task-completed-bg2", 5_000),
+            &mut app,
+        );
+        let _ = handle_ext_notification(
+            &xai_wake_turn_completed_notif("sess-wake", "task-completed-bg1", None),
+            &mut app,
+        );
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert_eq!(count_turn_markers(agent), 1);
+        assert_eq!(agent.running_wake_turn.as_ref().map(|wake| wake.prompt_id.as_str()), Some("task-completed-bg2"));
+        let _ = handle_ext_notification(
+            &xai_wake_turn_completed_notif("sess-wake", "task-completed-bg2", None),
+            &mut app,
+        );
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert_eq!(count_turn_markers(agent), 2);
+        assert!(agent.running_wake_turn.is_none());
+    }
+
+    #[test]
     fn wake_turn_stop_affordance_offered_then_cleared_at_terminal() {
         // The pane stays Idle around a wake turn, so the stop control is keyed on `running_wake_turn`
         // That flag is set by the first live wake delta and cleared by the wake terminal

@@ -113,6 +113,9 @@ impl SessionActor {
         &self,
         mode: crate::session::delivery_receiver::ReceiverResume,
     ) {
+        if !self.restart_recovery_permitted() {
+            return;
+        }
         let (respond_to, receive) = oneshot::channel();
         let command = match &mode {
             crate::session::delivery_receiver::ReceiverResume::Recovery { .. } => {

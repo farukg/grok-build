@@ -199,6 +199,13 @@ impl SessionActor {
             initial_child_prompt_ready,
             traceparent,
         } = request;
+        if !self.restart_recovery_permitted()
+            && !matches!(input_origin.as_prompt_origin(), PromptOrigin::User)
+        {
+            let _ = respond_to.send(Err(acp::Error::invalid_request()
+                .data("session awaits a newly submitted user message after stale restart")));
+            return false;
+        }
         tracing::info!("queueing prompt: {prompt_id}");
         let queue_depth = { self.state.lock().await.pending_inputs.len() };
         xai_grok_telemetry::unified_log::info(

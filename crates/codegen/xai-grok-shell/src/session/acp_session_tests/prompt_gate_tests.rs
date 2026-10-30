@@ -10,7 +10,7 @@ use super::*;
 
 use tokio::sync::mpsc;
 
-fn prompt_gate_registry(script: &str) -> xai_grok_hooks::discovery::HookRegistry {
+pub(super) fn prompt_gate_registry(script: &str) -> xai_grok_hooks::discovery::HookRegistry {
     let (mut registry, _) = xai_grok_hooks::discovery::load_hooks(None, None);
     registry.append_specs(vec![xai_grok_hooks::config::HookSpec {
         name: "test/promptgate".into(),

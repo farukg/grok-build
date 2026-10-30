@@ -154,7 +154,9 @@ async fn live_goal_fixture() -> LiveGoalFixture {
                 SubagentEvent::AcknowledgeCompletions { .. }
                 | SubagentEvent::OpenSpawnAdmission { .. }
                 | SubagentEvent::ClearUsageNotApplied(_) => {}
-                SubagentEvent::RecoverMessage(_)
+                SubagentEvent::ReserveChildSubmission { .. }
+                | SubagentEvent::QuiesceRestartChildren { .. }
+                | SubagentEvent::RecoverMessage(_)
                 | SubagentEvent::ValidateType(_)
                 | SubagentEvent::DescribeType(_)
                 | SubagentEvent::LoopUnitActive(_)

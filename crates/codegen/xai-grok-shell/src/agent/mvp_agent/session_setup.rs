@@ -1107,6 +1107,26 @@ impl MvpAgent {
             goal_mode_state: _persisted_goal_mode,
             workflow_runs: persisted_workflow_runs,
         } = persistence_info;
+        let mut summary = summary;
+        let restart_recovery = self.cfg.borrow().leader_restart_recovery.register(
+            session_id.0.as_ref(), summary.created_at, summary.completion_delivery.restart_admission,
+        );
+        let _restart_admission_guard = restart_recovery.activation.lock().await;
+        let restart_admission = restart_recovery.admission();
+        if restart_admission != summary.completion_delivery.restart_admission {
+            let (respond_to, response) = tokio::sync::oneshot::channel();
+            persistence.tx.send(crate::session::persistence::PersistenceMsg::SetRestartAdmission {
+                admission: restart_admission,
+                respond_to,
+            }).map_err(|_| acp::Error::internal_error().data("restart admission owner closed"))?;
+            response.await
+                .map_err(|_| acp::Error::internal_error().data("restart admission acknowledgement lost"))?
+                .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+            summary.apply_patch(&crate::session::storage::summary_write::SummaryPatch {
+                restart_admission: Some(restart_admission),
+                ..Default::default()
+            }, chrono::Utc::now());
+        }
         let summary = if !self.is_resident(&session_id)
             && (!summary.completion_delivery.obligations.is_empty()
                 || persisted_workflow_runs
@@ -1531,13 +1551,10 @@ impl MvpAgent {
                 .send(SessionCommand::RestoreCompletionWakePolicy(
                     summary.completion_delivery.wake_policy,
                 ));
-            // Restart policy fact, decided once at leader startup: a fresh stop
-            // resumes prior running work exactly as before; a stale stop cancels
-            // the recoverable obligations and leaves the session quiescent until
-            // the user sends a new message.
-            let stop_age = self.cfg.borrow().leader_restart_stop_age;
-            match stop_age {
-                xai_grok_tools::types::restart_stop_age::RestartStopAge::Fresh => {
+            match restart_recovery.admission() {
+                xai_grok_tools::types::restart_recovery::RestartAdmission::Unaffected
+                | xai_grok_tools::types::restart_recovery::RestartAdmission::Reactivated { .. }
+                | xai_grok_tools::types::restart_recovery::RestartAdmission::NewSession { .. } => {
                     let deliveries =
                         summary.completion_delivery.receiver.recoverable_ids();
                     if !deliveries.is_empty() {
@@ -1593,7 +1610,7 @@ impl MvpAgent {
                         }
                     }
                 }
-                xai_grok_tools::types::restart_stop_age::RestartStopAge::Stale => {
+                xai_grok_tools::types::restart_recovery::RestartAdmission::Quiescent { .. } => {
                     use crate::session::completion_delivery::{
                         CompletionObligation, CompletionSuppression,
                     };
@@ -1621,29 +1638,16 @@ impl MvpAgent {
                                 reason: CompletionSuppression::StaleRestart,
                                 respond_to,
                             });
-                        if sent.is_err() {
-                            tracing::error!(
-                                session_id = %session_id.0,
-                                "stale-restart completion cancel lost its persistence owner"
-                            );
-                        } else {
-                            match response.await {
-                                Ok(Ok(())) => tracing::info!(
-                                    session_id = %session_id.0,
-                                    cancelled,
-                                    "cancelled recoverable completions after stale leader restart"
-                                ),
-                                Ok(Err(error)) => tracing::error!(
-                                    session_id = %session_id.0,
-                                    %error,
-                                    "stale-restart completion cancel failed; obligations stay pending for the next load"
-                                ),
-                                Err(_) => tracing::error!(
-                                    session_id = %session_id.0,
-                                    "stale-restart completion cancel acknowledgement lost"
-                                ),
-                            }
-                        }
+                        sent.map_err(|_| acp::Error::internal_error().data(
+                            "stale-restart completion cancel lost its persistence owner"
+                        ))?;
+                        response.await
+                            .map_err(|_| acp::Error::internal_error().data(
+                                "stale-restart completion cancel acknowledgement lost"
+                            ))?
+                            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+                        tracing::info!(session_id = %session_id.0, cancelled,
+                            "cancelled recoverable completions after stale leader restart");
                     }
                 }
             }
@@ -1669,7 +1673,7 @@ impl MvpAgent {
             let _ = handle.cmd_tx.send(SessionCommand::AdvertiseCommands {
                 trigger: crate::session::AdvertiseTrigger::SessionLoad,
             });
-            if restored.awaiting_plan_approval {
+            if restored.awaiting_plan_approval && restart_recovery.admission().permits_recovery() {
                 let _ = handle.cmd_tx.send(SessionCommand::RestorePlanApproval);
             }
         }

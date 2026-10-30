@@ -998,11 +998,8 @@ pub struct Config {
     /// Consumed with a catalog guard by `handle_suggest_prompt`; see `ModelOverrideConfig::resolve`.
     #[serde(skip)]
     pub prompt_suggest_model_pin: crate::config::PromptSuggestModelPin,
-    /// Leader restart policy fact, decided once at leader startup (`run_leader`)
-    /// and consumed by session recovery and the scheduler restore. Not a config
-    /// file key; every non-leader process stays `Fresh` (today's behavior).
     #[serde(skip)]
-    pub leader_restart_stop_age: xai_grok_tools::types::restart_stop_age::RestartStopAge,
+    pub leader_restart_recovery: xai_grok_tools::types::restart_recovery::LeaderRestartRecovery,
 }
 #[derive(Debug, Clone, Default)]
 pub struct CliAgentOverrides {
@@ -1228,7 +1225,7 @@ impl Default for Config {
             session_summary_model: None,
             image_description_model: None,
             prompt_suggest_model_pin: crate::config::PromptSuggestModelPin::Unpinned,
-            leader_restart_stop_age: Default::default(),
+            leader_restart_recovery: Default::default(),
         };
         cfg.apply_env_overrides();
         cfg

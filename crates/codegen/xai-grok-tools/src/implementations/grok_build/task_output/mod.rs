@@ -13,7 +13,7 @@ use crate::DEFAULT_TOOL_OUTPUT_BYTES;
 use crate::implementations::BashTool;
 use crate::implementations::grok_build::task::TaskTool;
 use crate::implementations::grok_build::task::backend::SubagentBackendResource;
-use crate::implementations::grok_build::task::types::{SubagentSnapshot, SubagentSnapshotStatus};
+use crate::implementations::grok_build::task::types::{SubagentAccessError, SubagentSnapshot, SubagentSnapshotStatus};
 use crate::implementations::grok_build_concise::BashConciseTool;
 use crate::implementations::opencode::OpenCodeBashTool;
 use crate::implementations::task_output::tool::snapshot_to_result;
@@ -274,6 +274,7 @@ impl TaskOutputTool {
                 .backend()
                 .query(task_id, waits, query_timeout_ms, ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone()))
                 .await
+                .map_err(|error| xai_tool_runtime::ToolError::custom("coordinator_unavailable", error.to_string()))?
         {
             return Ok(format_subagent_snapshot(&snapshot, wait_hint));
         }
@@ -356,7 +357,7 @@ impl TaskOutputTool {
             max_output_bytes,
             WaitHint::NotRequested,
         )
-        .await;
+        .await?;
 
         let resolved = if waits
             && (!initial.pending_bash_ids.is_empty() || !initial.pending_subagent_ids.is_empty())
@@ -369,7 +370,7 @@ impl TaskOutputTool {
                 &initial.pending_subagent_ids,
                 deadline,
             )
-            .await
+            .await?
             .hint(requested, timeout);
             resolve_tasks(
                 task_ids,
@@ -379,7 +380,7 @@ impl TaskOutputTool {
                 max_output_bytes,
                 wait_hint,
             )
-            .await
+            .await?
         } else {
             initial
         };
@@ -435,7 +436,7 @@ pub(crate) async fn resolve_tasks(
     read_file_name: &str,
     max_output_bytes: usize,
     wait_hint: WaitHint,
-) -> ResolveResult {
+) -> Result<ResolveResult, xai_tool_runtime::ToolError> {
     let observations =
         crate::types::completion_observation::SubagentCompletionObservations::default();
     let mut results = Vec::with_capacity(task_ids.len());
@@ -462,6 +463,7 @@ pub(crate) async fn resolve_tasks(
                 .backend()
                 .query(id, false, None, Some(observations.clone()))
                 .await
+                .map_err(|error| xai_tool_runtime::ToolError::custom("coordinator_unavailable", error.to_string()))?
         {
             let is_terminal = snap.status.is_terminal();
             if let TaskOutputOutput::Result(r) = format_subagent_snapshot(&snap, wait_hint) {
@@ -476,29 +478,16 @@ pub(crate) async fn resolve_tasks(
         results.push(not_found_result(id));
     }
 
-    ResolveResult {
+    Ok(ResolveResult {
         observations,
         results,
         pending_bash_ids,
         pending_subagent_ids,
-    }
+    })
 }
 // Uses `TerminalBackend::wait_for_completion` for bash tasks (event-driven via the underlying `Notify`) and
 // `SubagentQueryRequest { block: true }` for subagents (blocks in the coordinator until the child session finishes).
 // No 200ms polling loop — wakeups happen on actual state transitions.
-
-/// Aborts all wrapped helper-wait tasks when dropped. Aborting drops the underlying
-/// `wait_for_completion` future, whose dropped reply channel the terminal actor detects to keep
-/// `block_waited` accurate.
-struct AbortWaitsOnDrop(Vec<tokio::task::AbortHandle>);
-
-impl Drop for AbortWaitsOnDrop {
-    fn drop(&mut self) {
-        for h in &self.0 {
-            h.abort();
-        }
-    }
-}
 
 /// Whether a multi-task wait returned because the deadline was hit or because
 /// the wait condition (any/all) completed first.
@@ -533,59 +522,25 @@ pub(crate) async fn wait_any_event_driven(
     bash_ids: &[String],
     subagent_ids: &[String],
     deadline: tokio::time::Instant,
-) -> WaitOutcome {
-    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-    if remaining.is_zero() {
-        return WaitOutcome::DeadlineElapsed;
+) -> Result<WaitOutcome, xai_tool_runtime::ToolError> {
+    use futures_util::StreamExt;
+
+    if deadline <= tokio::time::Instant::now() {
+        return Ok(WaitOutcome::DeadlineElapsed);
     }
 
-    // Register waiter BEFORE spawns to avoid race: a spawned task could complete
-    // and call notify_waiters() before the Notified future exists.
-    use tokio::sync::Notify as TokioNotify;
-    let done = std::sync::Arc::new(TokioNotify::new());
-    let notified = done.notified();
-
-    let mut waits: Vec<tokio::task::AbortHandle> = Vec::new();
-
-    for id in bash_ids {
-        let terminal = terminal.clone();
-        let id = id.clone();
-        let timeout = remaining;
-        let done = done.clone();
-        waits.push(
-            tokio::spawn(async move {
-                terminal.wait_for_completion(&id, Some(timeout)).await;
-                done.notify_waiters();
-            })
-            .abort_handle(),
-        );
-    }
-
-    for id in subagent_ids {
-        if let Some(be) = backend {
-            let be = be.clone();
-            let id = id.clone();
-            let timeout_ms = remaining.as_millis() as u64;
-            let done = done.clone();
-            waits.push(
-                tokio::spawn(async move {
-                    let _ = be.backend().query(&id, true, Some(timeout_ms), None).await;
-                    done.notify_waiters();
-                })
-                .abort_handle(),
-            );
-        }
-    }
-
-    // Tear the helper waits down on every exit path: first completion,
-    // deadline, or cancellation of this future.
-    let _guard = AbortWaitsOnDrop(waits);
-
+    let waits = task_waits(terminal, backend, bash_ids, subagent_ids, deadline);
+    let mut waits: futures_util::stream::FuturesUnordered<_> = waits.into_iter().collect();
     let outcome = tokio::select! {
-        _ = notified => WaitOutcome::CompletedEarly,
+        result = waits.next(), if !waits.is_empty() => {
+            if let Some(result) = result {
+                result.map_err(|error| xai_tool_runtime::ToolError::custom("coordinator_unavailable", error.to_string()))?;
+            }
+            WaitOutcome::CompletedEarly
+        }
         _ = tokio::time::sleep_until(deadline) => WaitOutcome::DeadlineElapsed,
     };
-    finalize_wait_outcome(outcome, deadline)
+    Ok(finalize_wait_outcome(outcome, deadline))
 }
 
 /// Wait until all tasks (bash and subagent) complete, or deadline is reached.
@@ -595,44 +550,49 @@ pub(crate) async fn wait_all_event_driven(
     bash_ids: &[String],
     subagent_ids: &[String],
     deadline: tokio::time::Instant,
-) -> WaitOutcome {
-    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-    if remaining.is_zero() {
-        return WaitOutcome::DeadlineElapsed;
+) -> Result<WaitOutcome, xai_tool_runtime::ToolError> {
+    if deadline <= tokio::time::Instant::now() {
+        return Ok(WaitOutcome::DeadlineElapsed);
     }
+    let waits = task_waits(terminal, backend, bash_ids, subagent_ids, deadline);
+    let outcome = tokio::select! {
+        result = futures_util::future::try_join_all(waits) => {
+            result.map_err(|error| xai_tool_runtime::ToolError::custom("coordinator_unavailable", error.to_string()))?;
+            WaitOutcome::CompletedEarly
+        }
+        _ = tokio::time::sleep_until(deadline) => WaitOutcome::DeadlineElapsed,
+    };
+    Ok(finalize_wait_outcome(outcome, deadline))
+}
 
-    let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-
+fn task_waits(
+    terminal: &std::sync::Arc<dyn crate::computer::types::TerminalBackend>,
+    backend: &Option<SubagentBackendResource>,
+    bash_ids: &[String],
+    subagent_ids: &[String],
+    deadline: tokio::time::Instant,
+) -> Vec<futures_util::future::BoxFuture<'static, Result<(), SubagentAccessError>>> {
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    let mut waits: Vec<futures_util::future::BoxFuture<'static, Result<(), SubagentAccessError>>> = Vec::new();
     for id in bash_ids {
         let terminal = terminal.clone();
         let id = id.clone();
-        let timeout = remaining;
-        handles.push(tokio::spawn(async move {
-            terminal.wait_for_completion(&id, Some(timeout)).await;
+        waits.push(Box::pin(async move {
+            terminal.wait_for_completion(&id, Some(remaining)).await;
+            Ok(())
         }));
     }
-
     for id in subagent_ids {
         if let Some(be) = backend {
             let be = be.clone();
             let id = id.clone();
-            let timeout_ms = remaining.as_millis() as u64;
-            handles.push(tokio::spawn(async move {
-                let _ = be.backend().query(&id, true, Some(timeout_ms), None).await;
+            waits.push(Box::pin(async move {
+                be.backend().query(&id, true, Some(remaining.as_millis() as u64), None).await?;
+                Ok(())
             }));
         }
     }
-
-    // Tear the helper waits down on every exit path: all complete, deadline,
-    // or cancellation of this future (see `AbortWaitsOnDrop`).
-    let _guard = AbortWaitsOnDrop(handles.iter().map(|h| h.abort_handle()).collect());
-
-    let all_fut = futures_util::future::join_all(handles);
-    let outcome = tokio::select! {
-        _ = all_fut => WaitOutcome::CompletedEarly,
-        _ = tokio::time::sleep_until(deadline) => WaitOutcome::DeadlineElapsed,
-    };
-    finalize_wait_outcome(outcome, deadline)
+    waits
 }
 
 // Historical fixture captured from the 0.4.10 implementation. In 0.4.10, get_task_output returned:
@@ -2493,7 +2453,7 @@ mod tests {
 
     /// Build resources with a terminal that returns None (task not found)
     /// and a SubagentBackendResource backed by the unified event channel.
-    fn resources_with_backend_query() -> (
+    pub(super) fn resources_with_backend_query() -> (
         Resources,
         tokio::sync::mpsc::UnboundedReceiver<
             crate::implementations::grok_build::task::types::SubagentEvent,
@@ -2514,7 +2474,7 @@ mod tests {
     }
 
     /// Extract a `SubagentQueryRequest` from a `SubagentEvent`, panicking on wrong variant.
-    fn unwrap_query(
+    pub(super) fn unwrap_query(
         event: crate::implementations::grok_build::task::types::SubagentEvent,
     ) -> crate::implementations::grok_build::task::types::SubagentQueryRequest {
         match event {
@@ -2654,7 +2614,7 @@ mod tests {
         }
     }
 
-    fn completed_subagent_snapshot(id: &str) -> SubagentSnapshot {
+    pub(super) fn completed_subagent_snapshot(id: &str) -> SubagentSnapshot {
         SubagentSnapshot {
             subagent_id: id.to_string(),
             description: "find files".to_string(),
@@ -2900,3 +2860,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "query_transport_tests.rs"]
+mod query_transport_tests;

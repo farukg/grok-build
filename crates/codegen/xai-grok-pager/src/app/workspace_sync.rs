@@ -160,7 +160,7 @@ fn agent_to_new_member(agent: &AgentView) -> Option<NewMember> {
     if !is_adoptable(agent) {
         return None;
     }
-    if agent.session.created_via_new && crate::views::dashboard::row::is_empty_idle_top_level(agent)
+    if agent.session.created_via_new && crate::views::dashboard::row::is_hidden_empty_top_level(agent)
     {
         return None;
     }

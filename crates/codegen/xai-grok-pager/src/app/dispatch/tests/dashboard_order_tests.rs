@@ -1,3 +1,6 @@
+#[path = "dashboard_running_order_tests.rs"]
+mod running_order_tests;
+
 use super::*;
 use crate::app::agent::AgentId;
 use crate::app::agent_view::{AgentRole, ChildLink};

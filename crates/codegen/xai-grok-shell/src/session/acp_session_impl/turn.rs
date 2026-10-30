@@ -526,6 +526,12 @@ impl SessionActor {
         self: &Arc<Self>,
         request: TurnInputRequest,
     ) -> PromptTurnResult {
+        if !self.restart_recovery_permitted()
+            && !matches!(request.input_origin.as_prompt_origin(), PromptOrigin::User)
+        {
+            return Err(acp::Error::invalid_request()
+                .data("session awaits a newly submitted user message after stale restart"));
+        }
         let _active = TURNS_ACTIVE.enter();
         let _work = crate::session::handle::WorkGuard::new(self.active_work.clone());
         let TurnInputRequest {
@@ -560,7 +566,9 @@ impl SessionActor {
             })),
         );
         let policy = input_origin.policy();
-        self.open_subagent_spawn_admission();
+        if self.restart_recovery_permitted() {
+            self.open_subagent_spawn_admission();
+        }
         if let Some(reservations) = &self.tool_context.task_completion_reservations
             && let Some(completion_id) = input_origin.completion_id()
         {
@@ -680,6 +688,9 @@ impl SessionActor {
         if policy.authority != InputAuthority::ModelAuthoredUntrusted
             && let Some(bash_command) = Self::extract_bash_command(&prompt_blocks)
         {
+            if !self.restart_recovery_permitted() {
+                return Err(acp::Error::invalid_request().data("send a new message before running commands"));
+            }
             return self
                 .handle_direct_bash_command(prompt_id, bash_command, &prompt_blocks)
                 .await;
@@ -759,7 +770,12 @@ impl SessionActor {
         };
         let mut user_input_kind = UserInputKind::Typed;
         let prompt_blocks = match resolved {
-            Ok(blocks) => blocks,
+            Ok(blocks) => {
+                if matches!(input_origin.as_prompt_origin(), PromptOrigin::User) {
+                    self.reactivate_for_new_user_message().await?;
+                }
+                blocks
+            },
             Err(SlashCommandOutcome::Builtin(action)) => {
                 let text_block =
                     |text: String| acp::ContentBlock::Text(acp::TextContent::new(text));
@@ -899,6 +915,9 @@ impl SessionActor {
                 original_blocks
             }
         };
+        if !self.restart_recovery_permitted() {
+            return Err(acp::Error::invalid_request().data("send a new message before starting inference after stale restart"));
+        }
         *self.doom_loop_turn_tally.lock() = Default::default();
         self.retain_timed_out_image_strips_for_new_turn();
         self.turn_stream_drained.lock().clear();

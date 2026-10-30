@@ -521,6 +521,7 @@ impl AgentView {
             session_agent_name: None,
             subagent_sessions: HashMap::new(),
             role: AgentRole::Root,
+            explicitly_opened: false,
             sharing_enabled: false,
             memory_mode: None,
             billing_surface_visible: false,

@@ -1494,39 +1494,55 @@ pub(super) fn parse_kill_outcome(
         .and_then(|envelope| envelope.result)
         .map(|payload| payload.outcome)
 }
-/// Map an `x.ai/subagent/cancel` response (payload under `result`) to a kill outcome.
-/// Prefers the typed `outcome`; falls back to the legacy `cancelled` bool for an older shell or an unknown future `kind`.
-/// An error/unparseable body is `RpcFailed` (the subagent may still be running, so leave the row alone).
-pub(super) fn parse_subagent_kill_outcome(resp: &str) -> SubagentKillOutcome {
+pub(super) fn parse_subagent_terminal(resp: &str) -> Option<xai_grok_shell::extensions::task::SubagentTerminalDto> {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Payload {
+        terminal: Option<xai_grok_shell::extensions::task::SubagentTerminalDto>,
+    }
+    let envelope = serde_json::from_str::<ExtMethodResult<Payload>>(resp).ok()?;
+    if envelope.error.is_some() {
+        return None;
+    }
+    envelope.result?.terminal
+}
+
+/// Decode stop acknowledgement without inventing a child completion.
+pub(in crate::app) fn parse_subagent_kill_outcome(resp: &str) -> SubagentKillOutcome {
     use xai_grok_shell::extensions::task::{
         CancelSubagentResponse, SubagentCancelOutcomeDto,
     };
-    let Some(payload) = serde_json::from_str::<
-        ExtMethodResult<CancelSubagentResponse>,
-    >(resp)
-        .ok()
-        .and_then(|envelope| envelope.result) else {
-        return SubagentKillOutcome::RpcFailed;
+    let envelope = match serde_json::from_str::<ExtMethodResult<CancelSubagentResponse>>(resp) {
+        Ok(envelope) => envelope,
+        Err(error) => return SubagentKillOutcome::RpcFailed {
+            message: format!("Invalid subagent stop response: {error}"),
+        },
+    };
+    if let Some(error) = envelope.error {
+        let message = match error {
+            serde_json::Value::String(message) => message,
+            error => error.get("message").and_then(serde_json::Value::as_str)
+                .unwrap_or("Subagent stop request failed").to_owned(),
+        };
+        return SubagentKillOutcome::RpcFailed { message };
+    }
+    let Some(payload) = envelope.result else {
+        return SubagentKillOutcome::RpcFailed {
+            message: "Subagent stop response has no result".to_owned(),
+        };
     };
     match payload.outcome {
         Some(SubagentCancelOutcomeDto::Cancelled) => SubagentKillOutcome::StoppedLive,
         Some(SubagentCancelOutcomeDto::AlreadyFinished { status }) => {
-            SubagentKillOutcome::NothingLive {
-                status: Some(status),
-            }
+            SubagentKillOutcome::AlreadyFinished { status }
         }
-        Some(SubagentCancelOutcomeDto::NotFound) => {
-            SubagentKillOutcome::NothingLive {
-                status: None,
-            }
-        }
-        Some(SubagentCancelOutcomeDto::Unknown) | None => {
+        Some(SubagentCancelOutcomeDto::NotFound) => SubagentKillOutcome::NotFound,
+        Some(SubagentCancelOutcomeDto::CustodyUnavailable { .. }) => SubagentKillOutcome::CustodyUnavailable,
+        Some(SubagentCancelOutcomeDto::Unknown) => SubagentKillOutcome::Unconfirmed,
+        None => {
             if payload.cancelled {
                 SubagentKillOutcome::StoppedLive
             } else {
-                SubagentKillOutcome::NothingLive {
-                        status: None,
-                    }
+                SubagentKillOutcome::Unconfirmed
             }
         }
     }

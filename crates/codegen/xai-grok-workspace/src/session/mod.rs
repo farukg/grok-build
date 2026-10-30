@@ -933,6 +933,14 @@ impl WorkspaceShared {
                     continue;
                 }
             }
+            let Some(restart_recovery) = session.toolset().get_resource_cloned::<
+                xai_grok_tools::types::restart_recovery::SessionRestartRecovery,
+            >().await else {
+                session.mark_stale_resolve();
+                tracing::error!(session = %sid, "snapshot rebuild has no restart recovery owner");
+                drop(guard);
+                continue;
+            };
             let baseline = (*session.effective_tool_config()).clone();
             match crate::session::tool_config::resolve_session_toolset_rebuild(
                 baseline,
@@ -949,6 +957,7 @@ impl WorkspaceShared {
                 self.compose_session_notification_handle(session.system_notify_handle()),
                 session.terminal_backend().clone(),
                 crate::session::tool_config::truncation_config_for_host(self.host_kind),
+                crate::session::tool_config::RestartRecoveryBinding::Existing(restart_recovery),
             ) {
                 Ok((effective, toolset)) => {
                     session

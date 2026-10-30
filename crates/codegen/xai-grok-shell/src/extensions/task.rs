@@ -74,6 +74,8 @@ struct ListTasksResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CancelSubagentRequest {
     pub subagent_id: String,
+    #[serde(default)]
+    pub binding: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelBinding,
     /// Older clients omit it and stop the subagent.
     #[serde(default)]
     pub mode: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition,
@@ -90,7 +92,8 @@ pub enum SubagentCancelOutcomeDto {
     AlreadyFinished { status: String },
     /// The id is unknown (never existed, or evicted), so no finish event is coming.
     NotFound,
-    /// Unknown future `kind` (`#[serde(other)]`): lets an old client still parse and fall back to the legacy bool.
+    CustodyUnavailable { target_id: String },
+    /// Unknown future `kind` (`#[serde(other)]`): not a stop acknowledgement.
     /// `From` never produces this variant.
     #[serde(other)]
     Unknown,
@@ -98,7 +101,6 @@ pub enum SubagentCancelOutcomeDto {
 
 impl SubagentCancelOutcomeDto {
     /// Legacy bool for older pagers: true only when a live subagent was stopped.
-    /// Already-finished and not-found map to false so an old pager finalizes the row.
     fn cancelled_bool(&self) -> bool {
         matches!(self, Self::Cancelled)
     }
@@ -112,6 +114,7 @@ impl From<SubagentCancelOutcome> for SubagentCancelOutcomeDto {
                 status: state.legacy_status().to_owned(),
             },
             SubagentCancelOutcome::NotFound => Self::NotFound,
+            SubagentCancelOutcome::CustodyUnavailable { target_id } => Self::CustodyUnavailable { target_id },
         }
     }
 }
@@ -213,10 +216,21 @@ struct GetSubagentRequest {
     timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentTerminalDto {
+    pub subagent_id: String,
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    pub result: xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminal,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GetSubagentResponse {
     snapshot: Option<SubagentSnapshotDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal: Option<SubagentTerminalDto>,
 }
 
 /// ACP DTO for a single subagent snapshot (any status).
@@ -447,24 +461,55 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
         "x.ai/subagent/cancel" => {
             let req: CancelSubagentRequest = parse(args)?;
             tracing::info!(subagent_id = %req.subagent_id, "Cancelling subagent via ext method");
-            let outcome = SubagentCancelOutcomeDto::from(
-                agent.cancel_subagent(&req.subagent_id, req.mode).await,
-            );
-            respond(Ok::<_, String>(CancelSubagentResponse {
-                subagent_id: req.subagent_id,
-                cancelled: outcome.cancelled_bool(),
-                outcome: Some(outcome),
-            }))
+            let outcome = match agent.cancel_subagent(&req.subagent_id, req.mode, req.binding).await {
+                Ok(outcome) => SubagentCancelOutcomeDto::from(outcome),
+                Err(error) => return respond(Err::<CancelSubagentResponse, _>(error)),
+            };
+            match &outcome {
+                SubagentCancelOutcomeDto::CustodyUnavailable { target_id } => {
+                    respond(Err::<CancelSubagentResponse, _>(format!(
+                        "Stop not confirmed for subagent '{target_id}': execution custody is unavailable."
+                    )))
+                }
+                SubagentCancelOutcomeDto::NotFound => respond(Err::<CancelSubagentResponse, _>(
+                    "Subagent stop not confirmed: target not found".to_owned(),
+                )),
+                SubagentCancelOutcomeDto::Unknown => respond(Err::<CancelSubagentResponse, _>(
+                    "Subagent stop was not confirmed".to_owned(),
+                )),
+                SubagentCancelOutcomeDto::Cancelled | SubagentCancelOutcomeDto::AlreadyFinished { .. } => {
+                    respond(Ok::<_, String>(CancelSubagentResponse {
+                        subagent_id: req.subagent_id,
+                        cancelled: outcome.cancelled_bool(),
+                        outcome: Some(outcome),
+                    }))
+                }
+            }
         }
         "x.ai/subagent/get" => {
             let req: GetSubagentRequest = parse(args)?;
             let block = req.block.unwrap_or(false);
             let timeout_ms = req.timeout_ms.unwrap_or(30_000);
 
-            let snapshot = agent
+            let snapshot = match agent
                 .query_subagent(&req.subagent_id, block, Some(timeout_ms))
-                .await;
-            let inspection = agent.inspect_subagent(&req.subagent_id).await;
+                .await
+            {
+                Ok(snapshot) => snapshot,
+                Err(error) => return respond(Err::<GetSubagentResponse, _>(error)),
+            };
+            let inspection = match agent.inspect_subagent(&req.subagent_id).await {
+                Ok(inspection) => inspection,
+                Err(error) => return respond(Err::<GetSubagentResponse, _>(error)),
+            };
+            let terminal = inspection.as_ref().and_then(|inspection| {
+                inspection.terminal.clone().map(|result| SubagentTerminalDto {
+                    subagent_id: inspection.snapshot.subagent_id.clone(),
+                    parent_session_id: inspection.parent_session_id.clone(),
+                    child_session_id: inspection.child_session_id.clone(),
+                    result,
+                })
+            });
             let (parent_session_id, child_session_id, provenance) = inspection
                 .map(|inspection| {
                     (
@@ -478,6 +523,7 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
                 })
                 .unwrap_or_default();
             respond(Ok::<_, String>(GetSubagentResponse {
+                terminal,
                 snapshot: snapshot.map(|snapshot| {
                     SubagentSnapshotDto::from_snapshot(
                         snapshot,
@@ -490,9 +536,11 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
         }
         "x.ai/subagent/list_running" => {
             let req: ListRunningSubagentsRequest = parse(args)?;
-            let subagents = agent
-                .list_running_subagents(&req.session_id)
-                .await
+            let inspections = match agent.list_running_subagents(&req.session_id).await {
+                Ok(inspections) => inspections,
+                Err(error) => return respond(Err::<ListRunningSubagentsResponse, _>(error)),
+            };
+            let subagents = inspections
                 .into_iter()
                 .map(SubagentLiveSnapshotDto::from)
                 .collect();
@@ -629,6 +677,7 @@ mod tests {
     #[test]
     fn from_resolved_running_subagent_maps_all_fields() {
         let resolved = SubagentInspection {
+            terminal: None,
             snapshot: SubagentSnapshot {
                 subagent_id: "s".into(),
                 subagent_type: "plan".into(),
@@ -821,7 +870,7 @@ mod tests {
 
     #[test]
     fn get_subagent_response_null_snapshot() {
-        let resp = GetSubagentResponse { snapshot: None };
+        let resp = GetSubagentResponse { snapshot: None, terminal: None };
         let json = serde_json::to_value(&resp).expect("should serialize");
         assert!(json.get("snapshot").is_none_or(|v| v.is_null()));
     }
@@ -846,6 +895,7 @@ mod tests {
             },
         };
         let resp = GetSubagentResponse {
+            terminal: None,
             snapshot: Some(SubagentSnapshotDto::from_snapshot(
                 snap,
                 "parent-1".into(),
@@ -887,6 +937,7 @@ mod tests {
             },
         };
         let resp = GetSubagentResponse {
+            terminal: None,
             snapshot: Some(SubagentSnapshotDto::from_snapshot(
                 snap,
                 "parent-2".into(),

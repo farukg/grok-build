@@ -8,6 +8,8 @@ mod metadata;
 mod recovery;
 #[path = "terminal_restart_tests.rs"]
 mod terminal_restart;
+#[path = "restart_cohort_tests.rs"]
+mod restart_cohort;
 use crate::session::completion_delivery::{
     CompletionArtifacts, CompletionEventPolicy, CompletionObligation, CompletionWakePolicy,
 };

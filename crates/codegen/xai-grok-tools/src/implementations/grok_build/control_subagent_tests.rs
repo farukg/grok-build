@@ -54,10 +54,12 @@ async fn pause_is_requested_for_the_parent_model_and_tells_how_to_resume() {
         id,
         actor,
         disposition,
+        binding,
     } = target
     else {
         panic!("expected a cancel by subagent id");
     };
+    assert!(matches!(binding, crate::implementations::grok_build::task::types::SubagentCancelBinding::Current));
     assert_eq!(
         (id.as_str(), actor, disposition),
         (
@@ -70,7 +72,7 @@ async fn pause_is_requested_for_the_parent_model_and_tells_how_to_resume() {
     );
     assert_eq!(
         output.to_prompt_format(),
-        "Subagent was paused by parent model; send it a message to resume it."
+        "Subagent interruption requested (paused by parent model); awaiting terminal confirmation. After confirmation, send it a message to resume it."
     );
     assert!(!output.is_error());
 }
@@ -87,7 +89,7 @@ async fn stop_is_requested_as_a_stop_and_answers_the_completion_notice() {
     ));
     assert_eq!(
         output.to_prompt_format(),
-        "Subagent was stopped by parent model."
+        "Subagent interruption requested (stopped by parent model); awaiting terminal confirmation."
     );
     assert_eq!(
         crate::reminders::task_completion::consumed_completion_ids(&output),
@@ -121,6 +123,25 @@ fn an_unknown_subagent_is_an_error_that_answers_no_notice() {
     });
     assert!(output.is_error());
     assert!(crate::reminders::task_completion::consumed_completion_ids(&output).is_empty());
+}
+
+#[tokio::test]
+async fn control_subagent_transport_loss_is_an_error_not_an_absence() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let mut resources = Resources::new();
+    resources.insert(ChannelBackend::for_session(tx, "root").into_resource());
+    resources.insert(OwnerSessionId("root".to_owned()));
+    let error = xai_tool_runtime::Tool::run(
+        &ControlSubagentTool,
+        test_ctx(resources.into_shared()),
+        ControlSubagentInput {
+            subagent_id: "child".to_owned(),
+            action: SubagentCancelDisposition::Stop,
+        },
+    ).await.expect_err("unavailable coordinator must not return NotFound");
+    assert!(error.to_string().contains("not confirmed"));
+    assert!(error.to_string().contains("coordinator unavailable"));
 }
 
 #[test]

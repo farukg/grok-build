@@ -6,6 +6,8 @@ use xai_grok_tools::implementations::grok_build::task::types::{
     ActiveAgentMessageOperation, ActiveAgentMessageOutcome, AgentAddress,
 };
 
+use xai_grok_tools::implementations::grok_build::task::coordinator::child_submission::ChildSubmissionAuthority;
+
 use super::{ChildHost, ChildReach, ChildResidence, MvpAgent, RunningChild, SessionHost};
 use crate::agent::subagent::PromptTurnReceipt;
 use crate::extensions::notification::SubagentDelivery;
@@ -163,6 +165,65 @@ impl MvpAgent {
         }
     }
 
+    async fn reserve_child_user_submission(
+        &self,
+        parent: &acp::SessionId,
+        child: &acp::SessionId,
+        prompt: &str,
+    ) -> Result<ChildSubmissionAuthority, acp::Error> {
+        let (respond_to, response) = oneshot::channel();
+        self.subagent_event_tx.send(
+            xai_grok_tools::implementations::grok_build::task::types::SubagentEvent::ReserveChildSubmission {
+                parent_session_id: parent.0.to_string(), child_session_id: child.0.to_string(), prompt: prompt.to_owned(), respond_to,
+            },
+        ).map_err(|_| acp::Error::internal_error().data("child submission coordinator closed"))?;
+        tokio::time::timeout(std::time::Duration::from_secs(30), response).await
+            .map_err(|_| acp::Error::internal_error().data("child submission authority timed out"))?
+            .map_err(|_| acp::Error::internal_error().data("child submission authority acknowledgement lost"))?
+            .map_err(|outcome| refused_wake(SendSubagentMessageOutcome::from(outcome)))
+    }
+
+    async fn admit_child_user_submission(
+        &self,
+        parent: &acp::SessionId,
+        child: &acp::SessionId,
+        address: &AgentAddress,
+    ) -> Result<(), acp::Error> {
+        self.validate_child_submission_target(parent, child, address)?;
+        let startup = self.cfg.borrow().leader_restart_recovery.startup();
+        let handle = self.session_handle_waiting_for_load(child).await;
+        self.validate_child_submission_target(parent, child, address)?;
+        match handle {
+            Some(handle) => handle.admit_new_user_message_after_restart().await?,
+            None => match startup {
+                xai_grok_tools::types::restart_recovery::RestartStartup::Continue => {},
+                xai_grok_tools::types::restart_recovery::RestartStartup::Cancel { .. } => {
+                    let session = self.management_session(child).await?;
+                    self.validate_child_submission_target(parent, child, address)?;
+                    session.handle.admit_new_user_message_after_restart().await?;
+                }
+            },
+        }
+        self.validate_child_submission_target(parent, child, address)
+    }
+
+    fn validate_child_submission_target(
+        &self,
+        parent: &acp::SessionId,
+        child: &acp::SessionId,
+        address: &AgentAddress,
+    ) -> Result<(), acp::Error> {
+        match self.session_host(child) {
+            Some(SessionHost::Child(ChildHost {
+                parent_session_id,
+                reach: ChildReach::Addressed { address: current, .. },
+            })) if parent_session_id == *parent && current == *address => Ok(()),
+            Some(SessionHost::Child(_)) | Some(SessionHost::Root) | None => {
+                Err(acp::Error::invalid_request().data("child submission target changed during admission"))
+            }
+        }
+    }
+
     pub(super) async fn wake_child_with_prompt(
         &self,
         parent_session_id: &acp::SessionId,
@@ -172,18 +233,22 @@ impl MvpAgent {
     ) -> Result<acp::PromptResponse, acp::Error> {
         self.wait_for_child_management(child).await;
         let text = prompt_text(prompt)?;
-        match self
-            .send_human_subagent_message(
-                &parent_session_id.0,
-                address.as_str().to_owned(),
-                text.clone(),
-                ActiveAgentMessageOperation::Steer,
-            )
-            .await
-        {
+        self.validate_child_submission_target(parent_session_id, child, &address)?;
+        let authority = self.reserve_child_user_submission(parent_session_id, child, &text).await?;
+        self.admit_child_user_submission(parent_session_id, child, &address).await?;
+        use xai_grok_tools::implementations::grok_build::task::{backend::{ChannelBackend, SubagentBackend}, types::ActiveAgentMessageRequest};
+        let outcome = if self.cfg.borrow().is_feature_enabled(crate::agent::config::Feature::ActiveAgentMessages) {
+            let request = ActiveAgentMessageRequest::try_new_from_human(address.as_str(), text.clone(), ActiveAgentMessageOperation::Steer)
+                .map_err(|outcome| refused_wake(SendSubagentMessageOutcome::from(outcome)))?
+                .with_child_submission(authority.clone());
+            ChannelBackend::for_coordinator_session(self.subagent_event_tx.clone(), parent_session_id.0.to_string())
+                .send_active_message(request).await
+        } else {
+            ActiveAgentMessageOutcome::Unsupported
+        };
+        match outcome {
             ActiveAgentMessageOutcome::Unsupported => {
-                self.continue_child_with_prompt(parent_session_id, child, text)
-                    .await
+                self.continue_admitted_child(parent_session_id, child, text, authority).await
             }
             outcome @ ActiveAgentMessageOutcome::Accepted { .. } => {
                 let wake =
@@ -206,9 +271,48 @@ impl MvpAgent {
         child: &acp::SessionId,
         text: String,
     ) -> Result<acp::PromptResponse, acp::Error> {
+        match self.session_host(child) {
+            Some(SessionHost::Child(ChildHost { reach: ChildReach::Addressed { address, .. }, .. })) => {
+                self.validate_child_submission_target(parent_session_id, child, &address)?;
+            }
+            Some(SessionHost::Child(_)) => return Err(acp::Error::invalid_request().data("workflow-owned child sessions do not accept prompts")),
+            Some(SessionHost::Root) | None => {
+                let cwd = self.get_session_cwd(parent_session_id).ok_or_else(|| acp::Error::invalid_request().data("saved child parent is unavailable"))?;
+                let source = crate::agent::subagent::durable_resume_source(child.0.as_ref(), parent_session_id.0.as_ref(), &cwd)
+                    .map_err(|error| acp::Error::invalid_request().data(error.to_string()))?;
+                if source.subagent_id != child.0.as_ref() || source.child_session_id != child.0.as_ref() {
+                    return Err(acp::Error::invalid_request().data("saved child identity does not match the submission"));
+                }
+            }
+        }
+        let authority = self.reserve_child_user_submission(parent_session_id, child, &text).await?;
+        match self.session_host(child) {
+            Some(SessionHost::Child(ChildHost { reach: ChildReach::Addressed { address, .. }, .. })) => {
+                self.admit_child_user_submission(parent_session_id, child, &address).await?;
+            }
+            Some(SessionHost::Child(_)) => return Err(acp::Error::invalid_request().data("workflow-owned child sessions do not accept prompts")),
+            Some(SessionHost::Root) | None => {
+                let session = self.management_disk_child_submission(parent_session_id, child).await?;
+                session.handle.admit_new_user_message_after_restart().await?;
+            }
+        }
+        self.continue_admitted_child(parent_session_id, child, text, authority).await
+    }
+
+    async fn continue_admitted_child(
+        &self,
+        parent_session_id: &acp::SessionId,
+        child: &acp::SessionId,
+        text: String,
+        authority: ChildSubmissionAuthority,
+    ) -> Result<acp::PromptResponse, acp::Error> {
+        self.wait_for_child_management(child).await;
+        self.drain_old_session_thread(child).await;
+        if self.child_writer_is_active(child) {
+            return Err(acp::Error::invalid_request().data("previous child actor still owns persistence"));
+        }
         let outcome = ResumeSubagentOutcome::from(
-            self.resume_subagent(&parent_session_id.0, &child.0, text)
-                .await,
+            self.resume_subagent_submission(&parent_session_id.0, &child.0, text, authority).await,
         );
         let body = serde_json::json!({ "childResume": outcome });
         match outcome {

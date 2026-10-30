@@ -37,11 +37,27 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 return;
             }
         };
+        let source = request.resume_from.clone().unwrap_or_else(|| request.id.clone());
+        if !matches!(request.runtime_overrides.child_submission, super::child_submission::ChildSubmission::Ordinary) {
+            let owned = matches!(self.resolve_resume(&source, &request.parent_session_id),
+                Ok(super::super::types::SubagentResumeTarget::Finished { subagent_id }) if subagent_id == source);
+            let submission = self.claim_child_submission(&request.runtime_overrides.child_submission, &request.parent_session_id, &source, &request.prompt);
+            match submission {
+                Ok(submission) if owned => {
+                    request.runtime_overrides.child_submission = submission;
+                }
+                Ok(_) | Err(_) => {
+                    let _ = result_tx.send(SubagentResult::failed(request.id.clone(), request.id.clone(), "child submission authority is no longer current"));
+                    return;
+                }
+            }
+        }
         // Late Task spawn after user Stop (detached TaskTool background).
         if !request.owner.is_workflow()
             && self
                 .spawn_blocked_sessions
-                .contains(&request.parent_session_id)
+                .contains_key(&request.parent_session_id)
+            && !request.runtime_overrides.child_submission.permits(&request.parent_session_id, &source)
         {
             let _ = result_tx.send(SubagentResult::interrupted(
                 request.id.clone(),

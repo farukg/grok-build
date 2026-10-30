@@ -70,6 +70,7 @@ pub(crate) use activity::SummaryActivity;
 /// Counters apply to the fresh read; everything else is last-writer-wins on that field alone.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SummaryPatch {
+    pub restart_admission: Option<xai_grok_tools::types::restart_recovery::RestartAdmission>,
     pub activity: SummaryActivity,
     pub messages: Option<CounterOp>,
     pub chat_messages: Option<CounterOp>,
@@ -116,6 +117,21 @@ impl Summary {
     /// `now` is the single timestamp used for both `last_active_at` (when activity is recorded) and `updated_at`.
     /// Returns `true` iff an auto title was adopted (`generated_title_if_absent` or `generated_title_regenerate`).
     pub(crate) fn apply_patch(&mut self, patch: &SummaryPatch, now: DateTime<Utc>) -> bool {
+        if let Some(admission) = patch.restart_admission {
+            if matches!(admission, xai_grok_tools::types::restart_recovery::RestartAdmission::Quiescent { .. })
+                && self.completion_delivery.restart_admission != admission
+            {
+                self.completion_delivery.receiver.retire_for(
+                    crate::session::delivery_receiver::ReceiverRetirement::StaleRestart,
+                );
+                let ids = self.completion_delivery.obligations.iter().map(|obligation| obligation.id()).collect();
+                self.completion_delivery.apply(&crate::session::completion_delivery::CompletionMutation::Suppress {
+                    ids,
+                    reason: crate::session::completion_delivery::CompletionSuppression::StaleRestart,
+                });
+            }
+            self.completion_delivery.restart_admission = admission;
+        }
         if let Some(mutation) = &patch.completion_mutation {
             self.completion_delivery.apply(mutation);
         }

@@ -33,6 +33,7 @@ fn test_gateway_with_receiver() -> (
 pub(super) fn spawn_ctx(parent_cwd: PathBuf) -> SubagentSpawnContext {
     let (tx, _rx) = mpsc::unbounded_channel();
     SubagentSpawnContext {
+        leader_restart_recovery: Default::default(),
         lsp: None,
         process_scope: None,
         parent_max_turns: None,

@@ -221,6 +221,7 @@ mod tests {
             output_token_budget: None,
             output_schema: None,
             loop_task_id: None,
+            child_submission: Default::default(),
         }
     }
 

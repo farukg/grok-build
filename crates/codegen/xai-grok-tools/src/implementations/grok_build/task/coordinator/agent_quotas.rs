@@ -173,6 +173,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         quotas.abandon(current.as_ref());
     }
     pub(super) fn clear_target_incarnation(&mut self, id: &str) {
+        self.revoke_child_submissions(id);
         let current = self.agent_message_quotas.target_incarnations.remove(id);
         let displaced = self.agent_message_quotas.displaced_incarnations.remove(id);
         self.agent_message_quotas.abandon(current.as_ref());

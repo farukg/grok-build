@@ -55,64 +55,63 @@
     }
 
     #[test]
-    fn killing_a_stuck_orphan_records_the_shell_reported_status() {
-        // The kill call carries the shell's terminal status: "cancelled" is the default when nothing was live, "completed" is a real terminal report
-        for status in ["cancelled", "completed"] {
+    fn unconfirmed_stop_response_preserves_history_until_real_terminal() {
+        use crate::app::actions::{Action, Effect, TaskResult};
+        use crate::app::dispatch::dispatch;
+        use crate::app::effects::parse_subagent_kill_outcome;
+
+        for wire in [
+            r#"{"result":{"subagentId":"child-1","cancelled":false,"outcome":{"kind":"not_found"}}}"#,
+            r#"{"result":{"subagentId":"child-1","cancelled":false,"outcome":{"kind":"custody_unavailable","target_id":"child-1"}}}"#,
+            r#"{"result":{"subagentId":"child-1","cancelled":false}}"#,
+            r#"{"result":{"subagentId":"child-1","cancelled":true,"outcome":{"kind":"future"}}}"#,
+            r#"{"result":{"subagentId":"child-1","cancelled":false,"outcome":{"kind":"already_finished","status":"completed"}}}"#,
+            r#"{"result":{"subagentId":"child-1","cancelled":false,"outcome":{"kind":"already_finished"}}}"#,
+            r#"{"result":null,"error":"coordinator unavailable"}"#,
+        ] {
             let mut app = make_app_with_agent("sess-1");
-            app.agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .session
-                .loading_replay = true;
-
-            let spawned = subagent_ext_replay(
-                "sess-1",
-                serde_json::json!({
-                    "sessionUpdate": "subagent_spawned",
-                    "subagent_id": "sa-1",
-                    "parent_session_id": "sess-1",
-                    "child_session_id": "child-1",
-                    "subagent_type": "general-purpose",
-                    "description": "orphan review",
-                }),
-                "sess-1-1",
-            );
-            handle_ext_notification(&spawned, &mut app);
-
-            {
-                let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-                agent.session.loading_replay = false;
-                let info = agent.subagent_sessions.get_mut("child-1").unwrap();
-                assert!(info.is_running());
-                info.attempt.pending_kill = true;
-                info.attempt.kill_requested_at = Some(std::time::Instant::now());
-            }
-
-            let finalized = finalize_killed_subagent(
+            assert!(handle(
+                make_ext_session_notification("sess-1", test_subagent_spawned("sess-1", "child-1")),
                 &mut app,
-                &acp::SessionId::new("sess-1".to_owned()),
-                "sa-1",
-                None,
-                status,
-            );
-            assert!(finalized, "the stuck orphan row must be finalized");
-
-            let agent = app.agents.get(&AgentId(0)).unwrap();
-            let info = agent.subagent_sessions.get("child-1").unwrap();
-            assert!(info.is_finished(), "kill must finalize the stuck orphan");
-            assert_eq!(info.attempt.status.as_deref(), Some(status));
-            assert!(!info.attempt.pending_kill, "pending_kill must clear so it can't revert");
-            assert!(info.attempt.kill_requested_at.is_none());
-            assert!(finalize_killed_subagent(
-                &mut app,
-                &acp::SessionId::new("sess-1".to_owned()),
-                "sa-1",
-                None,
-                "cancelled",
             ));
-            let info = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_sessions.get("child-1").unwrap_or_else(|| panic!("missing map entry"));
+            let effects = dispatch(Action::KillSubagent("child-1".into()), &mut app);
+            assert!(effects.iter().any(|effect| matches!(effect,
+                Effect::KillSubagent { subagent_id, attempt_id: Some(attempt), .. }
+                    if subagent_id == "child-1" && attempt == "at1.one"
+            )));
+            let before = app.agents.get(&AgentId(0)).unwrap().scrollback.len();
+            dispatch(Action::TaskComplete(TaskResult::KillSubagentComplete {
+                binding_epoch: 0,
+                session_id: "sess-1".into(),
+                subagent_id: "child-1".into(),
+                attempt_id: Some("at1.one".into()),
+                outcome: parse_subagent_kill_outcome(wire),
+            }), &mut app);
+
+            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+            draw_view(agent);
+            let info = agent.subagent_sessions.get("child-1").unwrap();
+            assert!(!info.is_finished(), "{wire}");
+            assert_eq!(info.attempt.status, None);
+            assert_eq!(info.attempt.duration_ms, None);
+            assert_eq!(info.attempt.tool_calls, None);
+            assert_eq!(info.attempt.turns, None);
+            assert_eq!(info.attempt.terminal_entry_id, None);
+            assert!(!info.attempt.pending_kill);
+            assert!(info.attempt.kill_requested_at.is_none());
+            assert_eq!(agent.scrollback.len(), before);
+            assert!(agent.toast.is_some());
+
+            assert!(handle(
+                make_ext_session_notification("sess-1", test_subagent_finished("child-1")),
+                &mut app,
+            ));
+            let info = &app.agents.get(&AgentId(0)).unwrap().subagent_sessions["child-1"];
             assert!(info.is_finished());
-            assert_eq!(info.attempt.status.as_deref(), Some(status));
+            assert_eq!(info.attempt.status.as_deref(), Some("completed"));
+            assert_eq!(info.attempt.tool_calls, Some(2));
+            assert_eq!(info.attempt.turns, Some(1));
+            assert_eq!(info.attempt.duration_ms, Some(500));
         }
     }
 
@@ -165,20 +164,25 @@
             .unwrap()
             .attempt.pending_kill = true;
 
-        assert!(finalize_killed_subagent(
+        crate::app::dispatch::dispatch(
+            crate::app::actions::Action::TaskComplete(crate::app::actions::TaskResult::KillSubagentComplete {
+                binding_epoch: 0,
+                session_id: "sess-1".into(),
+                subagent_id: "child-1".into(),
+                attempt_id: Some("at1.one".into()),
+                outcome: crate::app::effects::parse_subagent_kill_outcome(
+                    r#"{"result":{"subagentId":"child-1","cancelled":false,"outcome":{"kind":"not_found"}}}"#,
+                ),
+            }),
             &mut app,
-            &acp::SessionId::new("sess-1".to_owned()),
-            "child-1",
-            Some("at1.one"),
-            "cancelled",
-        ));
+        );
 
         let info = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_sessions.get("child-1").unwrap_or_else(|| panic!("missing map entry"));
         assert!(info.is_finished());
         assert_eq!(
             info.attempt.status.as_deref(),
             Some("failed"),
-            "retained terminal status must win over the kill-call default"
+            "a stop miss must preserve the producer terminal"
         );
         assert_eq!(info.attempt.error.as_deref(), Some("real failure"));
         assert_eq!(info.attempt.tool_calls, Some(7));
@@ -260,13 +264,18 @@
             .get_mut("child-bg")
             .unwrap()
             .attempt.pending_kill = true;
-        assert!(finalize_killed_subagent(
+        crate::app::dispatch::dispatch(
+            crate::app::actions::Action::TaskComplete(crate::app::actions::TaskResult::KillSubagentComplete {
+                binding_epoch: 0,
+                session_id: "sess-1".into(),
+                subagent_id: "child-bg".into(),
+                attempt_id: Some("at1.one".into()),
+                outcome: crate::app::effects::parse_subagent_kill_outcome(
+                    r#"{"result":{"subagentId":"child-bg","cancelled":false,"outcome":{"kind":"already_finished","status":"completed"}}}"#,
+                ),
+            }),
             &mut app,
-            &acp::SessionId::new("sess-1".to_owned()),
-            "child-bg",
-            Some("at1.one"),
-            "completed",
-        ));
+        );
 
         assert_eq!(terminal_rows(&app), 1, "re-finalize must not add a second row");
         assert_eq!(footer_count(&app), 1, "re-finalize must not add a second footer");

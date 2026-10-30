@@ -773,17 +773,20 @@ pub async fn run_leader(
     // agent config; nothing later in this process re-evaluates it.
     let restart_heartbeat =
         crate::leader::restart_policy::heartbeat_path(lock.lock_path());
-    let recorded_stop = crate::leader::restart_policy::read_stop_age(
+    let evidence = crate::leader::restart_policy::read_evidence(
         &restart_heartbeat,
         chrono::Utc::now(),
-    );
+    )?;
+    let recorded_stop = evidence.stop;
     info!(?recorded_stop, "leader restart policy decision");
-    agent_config.leader_restart_stop_age = recorded_stop.stop_age();
-    if let Err(e) =
-        crate::leader::restart_policy::write_heartbeat(&restart_heartbeat, chrono::Utc::now())
-    {
-        warn!(error = %e, "leader heartbeat write failed");
-    }
+    agent_config.leader_restart_recovery = match recorded_stop.stop_age() {
+        xai_grok_tools::types::restart_stop_age::RestartStopAge::Fresh =>
+            xai_grok_tools::types::restart_recovery::LeaderRestartRecovery::from_startup(evidence.startup),
+        xai_grok_tools::types::restart_stop_age::RestartStopAge::Stale =>
+            xai_grok_tools::types::restart_recovery::LeaderRestartRecovery::stale(chrono::Utc::now()),
+    };
+    let restart_startup = agent_config.leader_restart_recovery.startup();
+    crate::leader::restart_policy::write_running_with_startup(&restart_heartbeat, restart_startup)?;
     tokio::task::spawn_blocking(|| {
         xai_file_utils::queue::cleanup_orphaned_uploads(
             &grok_home::grok_home(),
@@ -830,7 +833,7 @@ pub async fn run_leader(
     let agent_busy_for_server = agent_busy.clone();
     let agent_activity_for_server = agent_activity.clone();
     let shutdown_tx_for_server = shutdown_tx.clone();
-    let ipc_handle = tokio::spawn(async move {
+    let mut ipc_handle = tokio::spawn(async move {
         if let Err(e) = run_leader_server(
             socket_path_for_server,
             ipc_to_agent_tx,
@@ -1361,11 +1364,13 @@ pub async fn run_leader(
             });
             tokio::select! {
                 biased;
-                _ = ipc_handle => {
+                result = &mut ipc_handle => {
+                    result?;
                     info!("IPC server stopped, shutting down leader");
                 }
                 _ = update_cancel.cancelled() => {
                     info!("Leader cancelled");
+                    ipc_handle.await?;
                 }
             }
             if let Some(relay_handle) = relay_handle_slot.borrow_mut().take() {
@@ -1374,8 +1379,12 @@ pub async fn run_leader(
             anyhow::Ok(())
         })
         .await?;
+    cancel.cancel();
+    drop(local_set);
+    drop(agent_keepalive);
     crate::upload::drain_pending_uploads(PERSISTENT_EXIT_DRAIN).await;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    crate::leader::restart_policy::write_stopped_with_startup(&restart_heartbeat, chrono::Utc::now(), restart_startup)?;
     Ok(())
 }
 #[cfg(test)]

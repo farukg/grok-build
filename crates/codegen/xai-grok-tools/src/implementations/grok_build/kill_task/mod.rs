@@ -240,7 +240,8 @@ impl xai_tool_runtime::Tool for KillTaskTool {
                             SubagentActor::model_tool(my_owner.clone()),
                             SubagentCancelDisposition::Stop,
                         )
-                        .await;
+                        .await
+                        .map_err(|error| xai_tool_runtime::ToolError::custom("coordinator_unavailable", error.to_string()))?;
                     return Ok(match outcome {
                         SubagentCancelOutcome::Cancelled { .. } => {
                             KillTaskOutput::Result(KillTaskResult {
@@ -255,6 +256,12 @@ impl xai_tool_runtime::Tool for KillTaskTool {
                                 outcome: KillOutcome::AlreadyExited,
                                 message: format!("Subagent already {}", state.legacy_status()),
                             })
+                        }
+                        SubagentCancelOutcome::CustodyUnavailable { target_id } => {
+                            return Err(xai_tool_runtime::ToolError::custom(
+                                "custody_unavailable",
+                                format!("Stop not confirmed for subagent '{target_id}': execution custody is unavailable."),
+                            ));
                         }
                         SubagentCancelOutcome::NotFound => {
                             not_found_response(

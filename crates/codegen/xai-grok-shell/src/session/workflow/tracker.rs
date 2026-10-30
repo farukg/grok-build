@@ -23,6 +23,12 @@ pub enum WorkflowRunStatus {
     Cancelled,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkflowCancellation {
+    Normal,
+    StaleRestart,
+}
+
 impl WorkflowRunStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
@@ -495,14 +501,30 @@ impl WorkflowTracker {
         run_id: &str,
         outcome: &WorkflowOutcome,
     ) -> Option<WorkflowRunState> {
+        self.apply_outcome_scoped(run_id, outcome, WorkflowCancellation::Normal)
+    }
+
+    pub(crate) fn cancel_stale_restart(&mut self, run_id: &str) -> Option<WorkflowRunState> {
+        self.apply_outcome_scoped(run_id, &WorkflowOutcome::Cancelled, WorkflowCancellation::StaleRestart)
+    }
+
+    fn apply_outcome_scoped(
+        &mut self,
+        run_id: &str,
+        outcome: &WorkflowOutcome,
+        scope: WorkflowCancellation,
+    ) -> Option<WorkflowRunState> {
         let run = self.run_mut(run_id)?;
         run.fold_elapsed();
-        if matches!(
-            run.state.status,
-            WorkflowRunStatus::Interrupted
-                | WorkflowRunStatus::Failed
-                | WorkflowRunStatus::Cancelled
-        ) {
+        let protected = match run.state.status {
+            WorkflowRunStatus::Interrupted => scope == WorkflowCancellation::Normal,
+            WorkflowRunStatus::Failed | WorkflowRunStatus::Cancelled => true,
+            WorkflowRunStatus::Complete => scope == WorkflowCancellation::StaleRestart,
+            WorkflowRunStatus::Active | WorkflowRunStatus::UserPaused | WorkflowRunStatus::BackOffPaused
+            | WorkflowRunStatus::NoProgressPaused | WorkflowRunStatus::InfraPaused | WorkflowRunStatus::Blocked
+            | WorkflowRunStatus::BudgetLimited => false,
+        };
+        if protected {
             run.state.record_event(
                 "workflow_outcome_ignored",
                 Some(format!(
