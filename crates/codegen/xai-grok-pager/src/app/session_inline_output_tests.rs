@@ -74,12 +74,14 @@ fn one_line_command_uses_real_stdout_for_render_fold_height_and_selection() {
     assert!(root.scrollback.get_by_id(id).unwrap().is_foldable());
     let lines: Vec<_> = root.last_scrollback_selection_model.ranges.iter()
         .flat_map(|range| &range.lines).collect();
+    assert_eq!(lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(),
+        ["  | stdout 界 > raw", "        second line"]);
     let mut selected = String::new();
     for (i, line) in lines.iter().enumerate() {
         if i > 0 { selected.push_str(line.joiner_to_previous.as_deref().unwrap_or("\n")); }
         selected.push_str(&line.text);
     }
-    assert_eq!(selected, source);
+    assert_eq!(selected, "  | stdout 界 > raw\n        second line");
     assert_eq!(source_text(&mut views, id).as_deref(), Some(source));
 }
 

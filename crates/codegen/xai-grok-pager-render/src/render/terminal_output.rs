@@ -8,13 +8,13 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use vte::{Params, Parser, Perform};
 
 use crate::theme::color_support::quantize;
 
-/// Bound transcript growth against pathological cursor jumps.
-/// Tool output is already truncated upstream; these only guard against escape-code abuse.
-const MAX_ROWS: usize = 50_000;
+/// Bound sparse allocation from cursor jumps, not naturally printed transcript length.
 const MAX_COLS: usize = 8_192;
 
 /// A single rendered transcript line: styled spans plus de-escaped plain text.
@@ -52,13 +52,109 @@ pub fn looks_like_terminal_output(raw: &str) -> bool {
     })
 }
 
-#[derive(Clone, Copy)]
-struct Cell {
-    ch: char,
-    style: Style,
+#[derive(Clone)]
+enum CellText {
+    Scalar(char),
+    Grapheme(String),
+}
+
+impl CellText {
+    fn push_to(&self, out: &mut String) {
+        match self {
+            Self::Scalar(ch) => out.push(*ch),
+            Self::Grapheme(text) => out.push_str(text),
+        }
+    }
+
+    fn width(&self) -> usize {
+        match self {
+            Self::Scalar(ch) => ch.width().unwrap_or(0),
+            Self::Grapheme(text) => text.width(),
+        }
+    }
+
+    fn append(&mut self, ch: char) -> bool {
+        if matches!(self, Self::Scalar(previous) if previous.is_ascii() && ch.is_ascii()) {
+            return false;
+        }
+        match self {
+            Self::Scalar(previous) => {
+                let mut text = previous.to_string();
+                let boundary = text.len();
+                text.push(ch);
+                if GraphemeCursor::new(boundary, text.len(), true)
+                    .is_boundary(&text, 0) != Ok(false)
+                {
+                    return false;
+                }
+                *self = Self::Grapheme(text);
+            }
+            Self::Grapheme(text) => {
+                let boundary = text.len();
+                text.push(ch);
+                if GraphemeCursor::new(boundary, text.len(), true)
+                    .is_boundary(text, 0) != Ok(false)
+                {
+                    text.truncate(boundary);
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn extended(&self, next: &Self) -> Option<Self> {
+        if matches!((self, next), (Self::Scalar(previous), Self::Scalar(ch)) if previous.is_ascii() && ch.is_ascii()) {
+            return None;
+        }
+        let mut text = String::new();
+        self.push_to(&mut text);
+        next.push_to(&mut text);
+        (text.graphemes(true).count() == 1).then_some(Self::Grapheme(text))
+    }
+}
+
+#[derive(Clone)]
+enum Cell {
+    Blank,
+    Glyph { text: CellText, style: Style },
+    Continuation,
+}
+
+fn glyph_start(line: &[Cell], col: usize) -> Option<usize> {
+    let cell = line.get(col)?;
+    match cell {
+        Cell::Blank | Cell::Glyph { .. } => Some(col),
+        Cell::Continuation => line.get(..col)?.iter().rposition(|cell| {
+            matches!(cell, Cell::Blank | Cell::Glyph { .. })
+        }),
+    }
+}
+
+fn clear_cells(line: &mut [Cell], cols: std::ops::Range<usize>) {
+    if cols.is_empty() {
+        return;
+    }
+    let start = glyph_start(line, cols.start).unwrap_or(line.len());
+    let last = cols.end.min(line.len()).saturating_sub(1);
+    let end = match glyph_start(line, last).and_then(|col| line.get(col).map(|cell| (col, cell))) {
+        Some((col, Cell::Glyph { text, .. })) => col + text.width(),
+        Some((col, Cell::Blank | Cell::Continuation)) => col + 1,
+        None => line.len(),
+    };
+    if let Some(cells) = line.get_mut(start..end) {
+        cells.fill(Cell::Blank);
+    }
+}
+
+// Batch printable extensions across SGR changes before measuring their width.
+enum PendingGlyph {
+    Empty,
+    Glyph { text: CellText, style: Style },
 }
 
 struct TermSink {
+    pending: PendingGlyph,
     base: Style,
     cur: Style,
     rows: Vec<Vec<Cell>>,
@@ -69,6 +165,7 @@ struct TermSink {
 impl TermSink {
     fn new(base: Style) -> Self {
         Self {
+            pending: PendingGlyph::Empty,
             base,
             cur: base,
             rows: vec![Vec::new()],
@@ -78,36 +175,64 @@ impl TermSink {
     }
 
     fn ensure_row(&mut self) {
-        if self.row >= MAX_ROWS {
-            self.row = MAX_ROWS - 1;
-        }
         while self.rows.len() <= self.row {
             self.rows.push(Vec::new());
         }
     }
 
     fn put(&mut self, ch: char) {
-        if self.col >= MAX_COLS {
+        if let PendingGlyph::Glyph { text, .. } = &mut self.pending
+            && text.append(ch)
+        {
             return;
         }
-        self.ensure_row();
-        let blank = Cell {
-            ch: ' ',
-            style: self.base,
+        self.flush_glyph();
+        self.pending = PendingGlyph::Glyph { text: CellText::Scalar(ch), style: self.cur };
+    }
+
+    fn flush_glyph(&mut self) {
+        let PendingGlyph::Glyph { text: incoming, style: incoming_style } =
+            std::mem::replace(&mut self.pending, PendingGlyph::Empty)
+        else {
+            return;
         };
+        self.ensure_row();
         let Some(line) = self.rows.get_mut(self.row) else {
             return;
         };
-        if self.col >= line.len() {
-            line.resize(self.col + 1, blank);
+        let previous = self.col.checked_sub(1).and_then(|col| glyph_start(line, col));
+        if let Some(start) = previous
+            && let Some(Cell::Glyph { text, style }) = line.get(start)
+            && start + text.width() == self.col
+            && let Some(extended) = text.extended(&incoming)
+        {
+            let style = *style;
+            let end = start + extended.width();
+            line.resize(line.len().max(end), Cell::Blank);
+            clear_cells(line, start..end.max(self.col));
+            if let Some(slot) = line.get_mut(start) {
+                *slot = Cell::Glyph { text: extended, style };
+            }
+            if let Some(tail) = line.get_mut(start + 1..end) {
+                tail.fill(Cell::Continuation);
+            }
+            self.col = end;
+            return;
         }
+        let width = incoming.width();
+        if width == 0 {
+            return;
+        }
+        let end = self.col + width;
+        line.resize(line.len().max(end), Cell::Blank);
+        clear_cells(line, self.col..end);
         if let Some(slot) = line.get_mut(self.col) {
-            *slot = Cell {
-                ch,
-                style: self.cur,
-            };
+            *slot = Cell::Glyph { text: incoming, style: incoming_style };
         }
-        self.col += 1;
+        if let Some(tail) = line.get_mut(self.col + 1..end) {
+            tail.fill(Cell::Continuation);
+        }
+        self.col = end;
     }
 
     fn newline(&mut self) {
@@ -118,21 +243,16 @@ impl TermSink {
 
     fn erase_line(&mut self, mode: u16) {
         self.ensure_row();
-        let blank = Cell {
-            ch: ' ',
-            style: self.base,
-        };
         let Some(line) = self.rows.get_mut(self.row) else {
             return;
         };
         match mode {
-            0 => line.truncate(self.col.min(line.len())),
-            1 => {
-                let end = (self.col + 1).min(line.len());
-                if let Some(prefix) = line.get_mut(..end) {
-                    prefix.fill(blank);
-                }
+            0 => {
+                let end = line.len();
+                clear_cells(line, self.col..end);
+                line.truncate(self.col.min(end));
             }
+            1 => clear_cells(line, 0..self.col.saturating_add(1)),
             2 => line.clear(),
             _ => {}
         }
@@ -141,12 +261,7 @@ impl TermSink {
     fn erase_display(&mut self, mode: u16) {
         match mode {
             0 => {
-                self.ensure_row();
-                let Some(line) = self.rows.get_mut(self.row) else {
-                    return;
-                };
-                let len = line.len();
-                line.truncate(self.col.min(len));
+                self.erase_line(0);
                 self.rows.truncate(self.row + 1);
             }
             2 | 3 => {
@@ -202,6 +317,7 @@ impl TermSink {
     }
 
     fn finish(mut self) -> Vec<RenderedLine> {
+        self.flush_glyph();
         // `str::lines()` ignores a single trailing newline; mirror that so a command ending in `\n` does not gain a spurious blank line
         if self.rows.last().is_some_and(|r| r.is_empty()) {
             self.rows.pop();
@@ -220,6 +336,9 @@ impl Perform for TermSink {
     }
 
     fn execute(&mut self, byte: u8) {
+        if matches!(byte, b'\n' | 0x0b | 0x0c | b'\r' | b'\t' | 0x08) {
+            self.flush_glyph();
+        }
         match byte {
             b'\n' | 0x0b | 0x0c => self.newline(),
             b'\r' => self.col = 0,
@@ -236,6 +355,9 @@ impl Perform for TermSink {
         _ignore: bool,
         action: char,
     ) {
+        if matches!(action, 'K' | 'J' | 'A' | 'B' | 'C' | 'D' | 'G') {
+            self.flush_glyph();
+        }
         match action {
             'm' => self.apply_sgr(params),
             'K' => self.erase_line(first_param(params, 0)),
@@ -337,47 +459,33 @@ fn parse_ext(sub: &[u16]) -> Option<Color> {
 }
 
 fn row_to_line(cells: Vec<Cell>, base: Style) -> RenderedLine {
-    let mut end = cells.len();
-    while end > 0 {
-        let Some(cell) = end.checked_sub(1).and_then(|i| cells.get(i)) else {
-            break;
-        };
-        if cell.ch == ' ' && cell.style == base {
-            end -= 1;
-        } else {
-            break;
-        }
-    }
-    let Some(cells) = cells.get(..end) else {
-        return RenderedLine {
-            line: Line::default(),
-            plain: String::new(),
-        };
-    };
-    if cells.is_empty() {
-        return RenderedLine {
-            line: Line::default(),
-            plain: String::new(),
-        };
-    }
-    let plain: String = cells.iter().map(|c| c.ch).collect();
+    let end = cells.iter().rposition(|cell| match cell {
+        Cell::Blank => false,
+        Cell::Glyph { text: CellText::Scalar(' '), style } => *style != base,
+        Cell::Glyph { .. } | Cell::Continuation => true,
+    }).map_or(0, |col| col + 1);
+    let mut plain = String::new();
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
-    let Some(first) = cells.first() else {
-        return RenderedLine {
-            line: Line::default(),
-            plain,
+    let mut style = base;
+    for cell in cells.into_iter().take(end) {
+        let (text, next_style) = match cell {
+            Cell::Blank => (CellText::Scalar(' '), base),
+            Cell::Glyph { text, style } => (text, style),
+            Cell::Continuation => continue,
         };
-    };
-    let mut style = first.style;
-    for c in cells {
-        if c.style != style {
-            spans.push(Span::styled(std::mem::take(&mut buf), style));
-            style = c.style;
+        if next_style != style {
+            if !buf.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut buf), style));
+            }
+            style = next_style;
         }
-        buf.push(c.ch);
+        text.push_to(&mut plain);
+        text.push_to(&mut buf);
     }
-    spans.push(Span::styled(buf, style));
+    if !buf.is_empty() {
+        spans.push(Span::styled(buf, style));
+    }
     RenderedLine {
         line: Line::from(spans),
         plain,
@@ -592,5 +700,131 @@ mod tests {
     #[test]
     fn progress_erase_entire_line_collapses() {
         assert_eq!(lines("loading 99%\x1b[2K\rdone\n"), vec!["done"]);
+    }
+
+    #[test]
+    fn known_terminal_input_without_escapes_still_resolves_tabs_crlf_and_controls() {
+        assert_eq!(lines("a\tb\r\nc\x00d\x07\r\n"), ["a       b", "cd"]);
+        assert_eq!(lines("\t\r\n"), [""]);
+        assert_eq!(lines("text  \r\n"), ["text"]);
+    }
+
+    #[test]
+    fn cursor_overwrite_uses_display_cells_for_wide_glyphs() {
+        assert_eq!(plain("界x\r!"), "! x");
+        assert_eq!(plain("界x\x1b[2D!"), " !x");
+        assert_eq!(plain("a界z\x1b[2D!"), "a !z");
+        assert_eq!(plain("界\t!"), "界      !");
+    }
+
+    #[test]
+    fn erases_clear_entire_intersecting_wide_glyphs() {
+        assert_eq!(plain("界x\x1b[2D\x1b[K"), "");
+        assert_eq!(plain("a界z\x1b[2D\x1b[1K"), "   z");
+        assert_eq!(plain("界x\x1b[2D\x1b[J"), "");
+    }
+
+    #[test]
+    fn combining_marks_do_not_advance_the_cursor() {
+        assert_eq!(plain("e\u{301}x\x08!"), "e\u{301}!");
+        assert_eq!(plain("e\u{301}x\r!"), "!x");
+        assert_eq!(plain("e\u{301}x\x1b[2D\x1b[K"), "");
+        assert_eq!(plain("界\u{301}x\x1b[2D!"), " !x");
+    }
+
+    #[test]
+    fn grapheme_extension_preserves_style_and_cell_width() {
+        let rows = render_terminal_lines("\x1b[31me\x1b[0m\u{301}x\x08!", Style::default());
+        let row = nth(&rows, 0);
+        assert_eq!(row.plain, "e\u{301}!");
+        assert_eq!(row.line.spans.first().map(|span| span.content.as_ref()), Some("e\u{301}"));
+        assert_eq!(row.line.spans.first().and_then(|span| span.style.fg), Some(quantize(Color::Red)));
+        assert_eq!(plain("⚠\u{fe0f}x\x1b[2D!"), " !x");
+    }
+
+    #[test]
+    fn long_combining_runs_preserve_text_style_and_cursor_cells() {
+        let marks = "\u{301}".repeat(32_768);
+        let glyph = format!("e{marks}");
+        let expected = format!("{glyph}!");
+        assert_eq!(plain(&format!("e{marks}x\x08!")), expected);
+        let interleaved = "\x1b[0m\u{301}".repeat(32_768);
+        let rows = render_terminal_lines(
+            &format!("\x1b[31me{interleaved}x\x08!"),
+            Style::default(),
+        );
+        let row = nth(&rows, 0);
+        assert_eq!(row.plain, expected);
+        assert_eq!(row.line.spans.first().map(|span| span.content.as_ref()), Some(glyph.as_str()));
+        assert_eq!(row.line.spans.first().and_then(|span| span.style.fg), Some(quantize(Color::Red)));
+        assert_eq!(plain(&format!("界{marks}x\x1b[2D!")), " !x");
+        assert_eq!(plain(&format!("e{marks}x\r!")), "!x");
+    }
+
+    #[test]
+    fn cursor_interrupted_combining_growth_preserves_text_style_and_display_cells() {
+        let count = 4_096;
+        let glyph = format!("e{}", "\u{301}".repeat(count));
+        let interrupted = "\u{301}\x1b[1D\x1b[1C".repeat(count);
+        assert_eq!(plain(&format!("e{interrupted}x\x08!")), format!("{glyph}!"));
+        let mut raw = String::from("\x1b[31me");
+        for _ in 0..count {
+            raw.push_str("\x1b[0m\u{301}\x1b[1D\x1b[1C");
+        }
+        raw.push_str("x\x08!");
+        let rows = render_terminal_lines(&raw, Style::default());
+        assert_eq!(rows.len(), 1);
+        let row = nth(&rows, 0);
+        assert_eq!(row.plain, format!("{glyph}!"));
+        assert_eq!(row.line.width(), 2);
+        let [accented, overwritten] = row.line.spans.as_slice() else {
+            panic!("expected accented glyph and overwritten cell");
+        };
+        assert_eq!(accented.content.as_ref(), glyph.as_str());
+        assert_eq!(accented.style, Style::default().fg(quantize(Color::Red)));
+        assert_eq!(overwritten.content.as_ref(), "!");
+        assert_eq!(overwritten.style, Style::default());
+    }
+
+    #[test]
+    fn interrupted_combining_growth_keeps_cursor_erase_and_wide_overwrite_semantics() {
+        let count = 128;
+        let glyph = format!("e{}", "\u{301}".repeat(count));
+        for interruption in [
+            "\x1b[1D\x1b[1C",
+            "\x08\x1b[1C",
+            "\r\x1b[2G",
+            "\x1b[1A\x1b[1B",
+            "\x1b[2G\x1b[K",
+        ] {
+            let mut raw = String::from("e");
+            for _ in 0..count {
+                raw.push('\u{301}');
+                raw.push_str(interruption);
+            }
+            assert_eq!(plain(&format!("{raw}x\x08!")), format!("{glyph}!"));
+            assert_eq!(plain(&format!("{raw}x\r!")), "!x");
+            assert_eq!(plain(&format!("{raw}x\r\x1b[K")), "");
+        }
+        let mut wide = String::from("界");
+        for _ in 0..count {
+            wide.push_str("\u{301}\x1b[1D\x1b[1C");
+        }
+        let rows = render_terminal_lines(&format!("{wide}x\x1b[2D!"), Style::default());
+        assert_eq!(rows.len(), 1);
+        let row = nth(&rows, 0);
+        assert_eq!(row.plain, " !x");
+        assert_eq!(row.line.width(), 3);
+        assert_eq!(plain(&format!("{wide}x\x1b[2D\x1b[K")), "");
+    }
+
+    #[test]
+    fn printed_rows_and_columns_are_not_cursor_jump_limits() {
+        let raw = format!("\x1b[32m{}TAIL", "row\n".repeat(70_000));
+        let rows = lines(&raw);
+        assert_eq!(rows.len(), 70_001);
+        assert_eq!(rows.last().map(String::as_str), Some("TAIL"));
+        let long = format!("\x1b[31m{}END", "x".repeat(10_000));
+        assert_eq!(plain(&long), format!("{}END", "x".repeat(10_000)));
     }
 }

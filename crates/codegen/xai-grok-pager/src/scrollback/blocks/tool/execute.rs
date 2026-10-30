@@ -92,10 +92,7 @@ impl ExecuteToolCallBlock {
     ///
     /// Returns the output string if available, or empty string if no output.
     pub fn copy_text(&self) -> String {
-        self.output
-            .as_deref()
-            .map(crate::render::terminal_output::render_terminal_plain)
-            .unwrap_or_default()
+        self.output.clone().unwrap_or_default()
     }
 
     /// Display form of the command for the header (may peel `cd &&` prefix).

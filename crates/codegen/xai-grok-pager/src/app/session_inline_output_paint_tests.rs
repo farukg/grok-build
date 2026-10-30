@@ -194,6 +194,32 @@ fn forms(views: &mut SessionViews, empty: DisplayMode, stdout: DisplayMode) {
 }
 
 #[test]
+fn acp_replayed_terminal_stdout_uses_the_modal_emulator_in_chat() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut app = replayed_app();
+    let raw = "\x1b[31mREPLAY_RED\x1b[0m\nobsolete\r\x1b[2KREPLAY_DONE";
+    app.agents.get_mut(&AgentId(0)).unwrap().session.loading_replay = true;
+    replay_task(&mut app, "ansi", raw);
+    app.agents.get_mut(&AgentId(0)).unwrap().session.loading_replay = false;
+    forms(&mut app.agents, DisplayMode::Collapsed, DisplayMode::Expanded);
+    let buffer = settle(&mut app.agents, AgentId(0), 100);
+    assert!(painted(&buffer).contains("REPLAY_RED"));
+    assert!(painted(&buffer).contains("REPLAY_DONE"));
+    assert!(!painted(&buffer).contains("obsolete"));
+    assert!(!painted(&buffer).contains('\x1b'));
+    let id = app.agents.get(&AgentId(0)).unwrap().scrollback.iter_entries()
+        .find_map(|(id, entry)| {
+            if let RenderBlock::BgTask(task) = &entry.block
+                && task.task_id == "ansi"
+            {
+                return Some(id);
+            }
+            None
+        }).unwrap();
+    assert_eq!(source_text(&mut app.agents, id).as_deref(), Some(raw));
+}
+
+#[test]
 fn replayed_completed_task_rows_have_one_width_for_measurement_paint_and_selection() {
     let _theme = crate::theme::cache::pin_theme();
     let mut app = replayed_app();

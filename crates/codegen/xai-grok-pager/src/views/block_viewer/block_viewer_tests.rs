@@ -474,6 +474,96 @@ fn selected_plain_text_visual_includes_preamble() {
 }
 
 #[test]
+fn terminal_modal_selection_uses_visible_cells_not_original_bytes() {
+    use crate::scrollback::blocks::tool::ExecuteToolCallBlock;
+
+    for raw in ["ab\rX", "a\tb", "a\r\nb  \r\n"] {
+        let entry = ScrollbackEntry::new(RenderBlock::ToolCall(ToolCallBlock::Execute(
+            ExecuteToolCallBlock::new("printf fixture").with_output(raw),
+        )));
+        for mut pane in [
+            BlockViewerPane::for_bg_task(entry.id, "task", raw, false),
+            BlockViewerPane::for_execute(entry.id, &entry).unwrap(),
+        ] {
+            let mut buffer = Buffer::empty(area());
+            pane.render_content(area(), &mut buffer, &entry, true, &[]);
+            let expected = match raw {
+                "ab\rX" => vec!["Xb"],
+                "a\tb" => vec!["a       b"],
+                "a\r\nb  \r\n" => vec!["a", "b"],
+                _ => unreachable!("explicit fixtures"),
+            };
+            assert_eq!(pane.items.iter().map(|item| item.plain_text.as_str()).collect::<Vec<_>>(), expected);
+            for (column, last, expected) in match raw {
+                "ab\rX" => vec![(0, 0, "X"), (1, 1, "b"), (0, 1, "Xb")],
+                "a\tb" => vec![(1, 7, "       "), (0, 8, "a       b")],
+                "a\r\nb  \r\n" => vec![(0, 0, "a")],
+                _ => unreachable!("explicit fixtures"),
+            } {
+                pane.clear_text_drag();
+                pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), column, 0);
+                pane.handle_mouse(MouseEventKind::Drag(MouseButton::Left), last, 0);
+                pane.text_drag.as_mut().unwrap().active = false;
+                assert_eq!(pane.selected_plain_text(), expected);
+            }
+            pane.clear_text_drag();
+            let (last_col, last_row, expected) = match raw {
+                "ab\rX" => (1, 0, "Xb"),
+                "a\tb" => (8, 0, "a       b"),
+                "a\r\nb  \r\n" => (0, 1, "a\nb"),
+                _ => unreachable!("explicit fixtures"),
+            };
+            pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 0, 0);
+            pane.handle_mouse(MouseEventKind::Drag(MouseButton::Left), last_col, last_row);
+            pane.handle_mouse(MouseEventKind::Up(MouseButton::Left), last_col, last_row);
+            assert_eq!(pane.selected_plain_text(), expected);
+            assert_eq!(pane.drag_copy_text.as_deref(), Some(expected));
+            pane.copy_content_pending = true;
+            assert_eq!(pane.process_pending_copy(&entry).as_deref(), Some(raw));
+        }
+    }
+}
+
+#[test]
+fn control_only_modal_output_is_blank_but_original_copy_is_byte_exact() {
+    use crate::scrollback::blocks::tool::ExecuteToolCallBlock;
+
+    for (raw, expected) in [("\t", Vec::<&str>::new()), ("\r\n", vec![""])] {
+        let entry = ScrollbackEntry::new(RenderBlock::ToolCall(ToolCallBlock::Execute(
+            ExecuteToolCallBlock::new("printf fixture").with_output(raw),
+        )));
+        for mut pane in [
+            BlockViewerPane::for_bg_task(entry.id, "task", raw, false),
+            BlockViewerPane::for_execute(entry.id, &entry).unwrap(),
+        ] {
+            let mut buffer = Buffer::empty(area());
+            pane.render_content(area(), &mut buffer, &entry, true, &[]);
+            assert_eq!(pane.items.iter().map(|item| item.plain_text.as_str()).collect::<Vec<_>>(), expected);
+            assert_eq!(pane.selected_plain_text(), "");
+            pane.copy_content_pending = true;
+            assert_eq!(pane.process_pending_copy(&entry).as_deref(), Some(raw));
+        }
+    }
+}
+
+#[test]
+fn source_viewer_keeps_grammar_text_instead_of_terminal_overwrite() {
+    use crate::scrollback::blocks::tool::ReadToolCallBlock;
+
+    let raw = "let value = \"ab\x1b[2DX\";";
+    let entry = ScrollbackEntry::new(RenderBlock::ToolCall(ToolCallBlock::Read(
+        ReadToolCallBlock::new("fixture.rs").with_content(raw.into(), 1),
+    )));
+    let mut pane = BlockViewerPane::for_read(entry.id, &entry).unwrap();
+    let mut buffer = Buffer::empty(area());
+    pane.render_content(area(), &mut buffer, &entry, true, &[]);
+    assert_eq!(pane.items[0].plain_text, "1  let value = \"ab\x1b[2DX\";");
+    assert_eq!(pane.selected_plain_text(), "1  let value = \"ab\x1b[2DX\";");
+    pane.copy_content_pending = true;
+    assert_eq!(pane.process_pending_copy(&entry).as_deref(), Some(raw));
+}
+
+#[test]
 fn a_failed_tool_search_viewer_shows_the_error() {
     let block = crate::scrollback::blocks::IntegrationSearchToolCallBlock::new("slack")
         .with_error("no such server");

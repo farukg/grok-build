@@ -292,6 +292,7 @@ impl SessionViews {
             identity,
             theme: crate::theme::cache::current_kind(),
             thinking_visible: crate::appearance::cache::load_show_thinking_blocks(),
+            terminal_coloring: crate::appearance::terminal_coloring::current(),
         })
     }
 
@@ -526,9 +527,20 @@ impl SessionViews {
         {
             return SourceBody::Content(output);
         }
-        let lines: Vec<_> = crate::scrollback::blocks::tool::body::wrapped_body(
+        let theme = crate::theme::Theme::current();
+        let path = std::path::Path::new("");
+        let syntect = crate::syntax::get_syntect();
+        let rows = crate::render::content_kind::terminal_rows(
+            syntect,
+            path,
             &task.stdout,
-            crate::theme::Theme::current().primary(),
+            key.terminal_coloring,
+            theme.primary(),
+        )
+        .into_iter()
+        .map(|row| ratatui::text::Line::from(row.spans));
+        let lines: Vec<_> = crate::scrollback::blocks::tool::body::wrapped_lines(
+            rows,
             usize::from(width),
             "",
         )
@@ -905,3 +917,7 @@ mod completion_tests;
 #[cfg(test)]
 #[path = "session_inline_output_paint_tests.rs"]
 mod paint_tests;
+
+#[cfg(test)]
+#[path = "session_inline_output_terminal_tests.rs"]
+mod terminal_tests;

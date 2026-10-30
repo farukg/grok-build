@@ -93,6 +93,7 @@ pub(crate) struct SourceKey {
     pub identity: SourceIdentity,
     pub theme: crate::theme::ThemeKind,
     pub thinking_visible: bool,
+    pub terminal_coloring: crate::appearance::TerminalColoring,
 }
 
 impl SourceKey {
