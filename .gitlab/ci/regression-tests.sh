@@ -263,6 +263,12 @@ run_tests xai-grok-shell lib --all-executed \
     -- --exact || status=$?
 
 run_tests xai-grok-shell lib --all-executed \
+    'extensions::task::tests::' \
+    'agent::subagent::tests::rest::reconcile_' \
+    'agent::subagent::tests::rest::live_reconcile_' \
+    'session::acp_session::notification_drain::live_orphan_hook_tests::' || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
     'session::storage::replay_tests::' \
     'session::storage::replay_tests::row_timestamps::' \
     'agent::mvp_agent::replay_tests::' \
@@ -295,7 +301,8 @@ run_tests xai-grok-tools lib --all-executed \
     'implementations::grok_build::task_output::wait_observation_tests::' \
     'implementations::grok_build::list_subagents::tests::' \
     'implementations::grok_build::control_subagent::tests::' \
-    'implementations::grok_build::task::coordinator::cancel_f3_tests::' || status=$?
+    'implementations::grok_build::task::coordinator::cancel_f3_tests::' \
+    'implementations::grok_build::task::coordinator::tests::nested_spawner_lists_grandchild_in_list_running_and_list_active' || status=$?
 
 run_tests xai-grok-tools lib --all-executed \
     'implementations::grok_build::task::coordinator::child_submission_tests::' \

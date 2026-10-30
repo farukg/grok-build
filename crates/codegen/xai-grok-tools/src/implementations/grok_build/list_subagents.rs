@@ -17,20 +17,52 @@ pub struct ListedSubagent {
     pub subagent_type: String,
     pub description: String,
     pub started_at_epoch_ms: u64,
-    pub duration_ms: u64,
-    pub state: SubagentState,
+    #[serde(default)]
+    pub parent_session_id: String,
+    #[serde(default)]
+    pub child_session_id: String,
+    pub fork_parent_prompt_id: Option<String>,
+    pub resumed_from: Option<String>,
+    pub persona: Option<String>,
+    #[serde(flatten)]
+    pub observation: ListedSubagentObservation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ListedSubagentObservation {
+    Available { duration_ms: u64, state: SubagentState },
+    Unavailable { unavailable: CustodyUnavailable },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustodyUnavailable {
+    CustodyUnavailable,
 }
 
 impl From<SubagentInspection> for ListedSubagent {
     fn from(inspection: SubagentInspection) -> Self {
-        let snapshot = inspection.snapshot;
+        let observation = match inspection.snapshot() {
+            Some(snapshot) => ListedSubagentObservation::Available {
+                state: snapshot.status.state(),
+                duration_ms: snapshot.duration_ms,
+            },
+            None => ListedSubagentObservation::Unavailable {
+                unavailable: CustodyUnavailable::CustodyUnavailable,
+            },
+        };
         Self {
-            state: snapshot.status.state(),
-            subagent_id: snapshot.subagent_id,
-            subagent_type: snapshot.subagent_type,
-            description: snapshot.description,
-            started_at_epoch_ms: snapshot.started_at_epoch_ms,
-            duration_ms: snapshot.duration_ms,
+            observation,
+            subagent_id: inspection.subagent_id,
+            subagent_type: inspection.subagent_type,
+            description: inspection.description,
+            started_at_epoch_ms: inspection.started_at_epoch_ms,
+            parent_session_id: inspection.parent_session_id,
+            child_session_id: inspection.child_session_id,
+            fork_parent_prompt_id: inspection.fork_parent_prompt_id,
+            resumed_from: inspection.resumed_from,
+            persona: inspection.persona,
         }
     }
 }
@@ -51,13 +83,19 @@ impl std::fmt::Display for ListSubagentsOutput {
         for subagent in &self.subagents {
             write!(
                 f,
-                "{separator}- {} [{}] {:?} ({:.1}s): {}",
+                "{separator}- {} [{}] {:?}",
                 subagent.subagent_id,
                 subagent.subagent_type,
                 subagent.description,
-                subagent.duration_ms as f64 / 1000.0,
-                subagent.state.model_text(),
             )?;
+            match &subagent.observation {
+                ListedSubagentObservation::Available { duration_ms, state } => {
+                    write!(f, " ({:.1}s): {}", *duration_ms as f64 / 1000.0, state.model_text())?;
+                }
+                ListedSubagentObservation::Unavailable { .. } => {
+                    f.write_str(": custody unavailable")?;
+                }
+            }
             separator = "\n";
         }
         Ok(())

@@ -651,12 +651,63 @@ pub struct SubagentSnapshot {
 /// Lifecycle metadata returned to shell presentation and extension callers.
 #[derive(Debug, Clone)]
 pub struct SubagentInspection {
-    pub snapshot: SubagentSnapshot,
-    pub terminal: Option<super::terminal::SubagentTerminal>,
+    pub subagent_id: String,
+    pub description: String,
+    pub subagent_type: String,
+    pub started_at_epoch_ms: u64,
+    pub persona: Option<String>,
     pub parent_session_id: String,
     pub child_session_id: String,
     pub fork_parent_prompt_id: Option<String>,
     pub resumed_from: Option<String>,
+    pub observation: ChildObservation,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChildObservation {
+    /// An existing coordinator record with queue and publication custody, not necessarily running.
+    Resident {
+        status: SubagentSnapshotStatus,
+        duration_ms: u64,
+    },
+    Terminal(super::terminal::SubagentTerminal),
+    Uncustodied,
+}
+
+impl SubagentInspection {
+    pub fn snapshot(&self) -> Option<SubagentSnapshot> {
+        use super::terminal::SubagentTerminalState;
+        let (status, duration_ms) = match &self.observation {
+            ChildObservation::Resident { status, duration_ms } => (status.clone(), *duration_ms),
+            ChildObservation::Terminal(terminal) => {
+                let status = match &terminal.state {
+                    SubagentTerminalState::Completed => SubagentSnapshotStatus::Completed {
+                        output: terminal.output.to_string(),
+                        tool_calls: terminal.tool_calls,
+                        turns: terminal.turns,
+                        worktree_path: None,
+                    },
+                    SubagentTerminalState::Failed { message } => SubagentSnapshotStatus::Failed {
+                        error: message.clone(),
+                    },
+                    SubagentTerminalState::Interrupted { cause } => SubagentSnapshotStatus::Cancelled {
+                        cause: cause.clone(),
+                    },
+                };
+                (status, terminal.duration_ms)
+            }
+            ChildObservation::Uncustodied => return None,
+        };
+        Some(SubagentSnapshot {
+            subagent_id: self.subagent_id.clone(),
+            description: self.description.clone(),
+            subagent_type: self.subagent_type.clone(),
+            started_at_epoch_ms: self.started_at_epoch_ms,
+            persona: self.persona.clone(),
+            status,
+            duration_ms,
+        })
+    }
 }
 
 impl SubagentSnapshot {

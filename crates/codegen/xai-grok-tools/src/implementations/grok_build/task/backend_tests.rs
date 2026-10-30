@@ -686,21 +686,12 @@ async fn channel_backend_list_owned_nonempty() {
         let request = recv_event!(rx, ListOwned);
         assert_eq!(request.parent_session_id.as_deref(), Some("root"));
         request.respond_to.send(vec![SubagentInspection {
-            snapshot: SubagentSnapshot {
-                subagent_id: "child".to_owned(),
-                description: "find bugs".to_owned(),
-                subagent_type: "explore".to_owned(),
-                status: super::super::types::SubagentSnapshotStatus::Completed {
-                    output: "result".to_owned(),
-                    tool_calls: 2,
-                    turns: 1,
-                    worktree_path: None,
-                },
-                started_at_epoch_ms: 1000,
-                duration_ms: 200,
-                persona: Some("reviewer".to_owned()),
-            },
-            terminal: Some(super::super::terminal::SubagentTerminal {
+            subagent_id: "child".to_owned(),
+            description: "find bugs".to_owned(),
+            subagent_type: "explore".to_owned(),
+            started_at_epoch_ms: 1000,
+            persona: Some("reviewer".to_owned()),
+            observation: super::super::types::ChildObservation::Terminal(super::super::terminal::SubagentTerminal {
                 attempt_id: "attempt-1".to_owned(),
                 state: super::super::terminal::SubagentTerminalState::Completed,
                 output: Arc::from("result"),
@@ -718,19 +709,21 @@ async fn channel_backend_list_owned_nonempty() {
     let listed = await_with_timeout(backend.list_owned()).await.unwrap();
     assert_eq!(listed.len(), 1);
     let child = &listed[0];
-    assert_eq!(child.snapshot.subagent_id, "child");
-    assert_eq!(child.snapshot.description, "find bugs");
-    assert_eq!(child.snapshot.subagent_type, "explore");
-    assert_eq!(child.snapshot.started_at_epoch_ms, 1000);
-    assert_eq!(child.snapshot.duration_ms, 200);
-    assert_eq!(child.snapshot.persona.as_deref(), Some("reviewer"));
+    assert_eq!(child.subagent_id, "child");
+    assert_eq!(child.description, "find bugs");
+    assert_eq!(child.subagent_type, "explore");
+    assert_eq!(child.started_at_epoch_ms, 1000);
+    assert_eq!(child.snapshot().expect("available snapshot").duration_ms, 200);
+    assert_eq!(child.persona.as_deref(), Some("reviewer"));
     assert!(matches!(
-        &child.snapshot.status,
+        &child.snapshot().expect("available snapshot").status,
         super::super::types::SubagentSnapshotStatus::Completed {
             output, tool_calls: 2, turns: 1, worktree_path: None,
         } if output == "result"
     ));
-    let terminal = child.terminal.as_ref().expect("terminal evidence is preserved");
+    let super::super::types::ChildObservation::Terminal(terminal) = &child.observation else {
+        panic!("expected real terminal evidence");
+    };
     assert_eq!(terminal.attempt_id, "attempt-1");
     assert!(matches!(terminal.state, super::super::terminal::SubagentTerminalState::Completed));
     assert_eq!(terminal.output.as_ref(), "result");

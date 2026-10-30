@@ -6,8 +6,9 @@ use tokio::sync::oneshot;
 
 use super::super::coordinator_state::{
     BlockingWaiter, CompletedChild, ListRequest, OUTPUT_UNAVAILABLE_PLACEHOLDER, ProgressFuture,
-    ProgressTarget, RunningSeed, completed_inspection, completed_snapshot, pending_inspection,
-    pending_snapshot, queued_inspection, queued_snapshot, running_inspection, running_seed,
+    ProgressTarget, RunningSeed, completed_inspection, completed_resident_inspection,
+    completed_snapshot, pending_inspection, pending_snapshot, queued_inspection, queued_snapshot,
+    running_inspection, running_seed,
 };
 use super::super::types::{SubagentInspection, SubagentSnapshot};
 use super::{ChildControl, ChildRunner, SubagentCoordinator, SubagentProgress};
@@ -175,9 +176,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             QueryOutput::Resident => completed_inspection(child, None),
             QueryOutput::Loaded(output) => completed_inspection(child, Some(&output)),
             QueryOutput::Unavailable => {
-                let mut inspection = completed_inspection(child, Some(OUTPUT_UNAVAILABLE_PLACEHOLDER));
-                inspection.terminal = None;
-                inspection
+                completed_resident_inspection(child, Some(OUTPUT_UNAVAILABLE_PLACEHOLDER))
             }
         }
     }
@@ -303,7 +302,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let inspection = running_inspection(seed, progress);
         match target {
             ProgressTarget::Query(respond_to) => {
-                let _ = respond_to.send(Some(inspection.snapshot));
+                let _ = respond_to.send(inspection.snapshot());
             }
             ProgressTarget::Inspect(respond_to) => {
                 let _ = respond_to.send(Some(inspection));

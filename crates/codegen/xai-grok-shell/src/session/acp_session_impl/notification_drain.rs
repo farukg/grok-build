@@ -1345,11 +1345,11 @@ impl SessionActor {
 #[cfg(test)]
 mod live_orphan_hook_tests {
     use super::*;
-    use crate::agent::subagent::{LIVE_ORPHAN_RECONCILE_REASON, SubagentMeta, SubagentMetaStatus};
+    use crate::agent::subagent::{SubagentMeta, SubagentMetaStatus};
     use crate::extensions::notification::SessionUpdate;
     use crate::session::persistence::PersistenceMsg;
     use xai_grok_tools::implementations::grok_build::task::types::{
-        SubagentEvent, SubagentInspection, SubagentSnapshot, SubagentSnapshotStatus,
+        ChildObservation, SubagentEvent, SubagentInspection, SubagentSnapshotStatus,
     };
 
     fn running_meta(id: &str, parent: &str) -> SubagentMeta {
@@ -1389,11 +1389,13 @@ mod live_orphan_hook_tests {
 
     fn running_inspection(id: &str) -> SubagentInspection {
         SubagentInspection {
-            terminal: None,
-            snapshot: SubagentSnapshot {
-                subagent_id: id.to_string(),
-                description: "task".to_string(),
-                subagent_type: "explore".to_string(),
+            subagent_id: id.to_string(),
+            description: "task".to_string(),
+            subagent_type: "explore".to_string(),
+            started_at_epoch_ms: 0,
+            persona: None,
+            observation: ChildObservation::Resident {
+                duration_ms: 50,
                 status: SubagentSnapshotStatus::Running {
                     turn_count: 1,
                     tool_call_count: 0,
@@ -1403,9 +1405,6 @@ mod live_orphan_hook_tests {
                     tools_used: Vec::new(),
                     error_count: 0,
                 },
-                started_at_epoch_ms: 0,
-                duration_ms: 50,
-                persona: None,
             },
             parent_session_id: String::new(),
             child_session_id: format!("child-{id}"),
@@ -1444,13 +1443,13 @@ mod live_orphan_hook_tests {
                 if let SubagentEvent::Inspect(request) = event {
                     let value = inspect
                         .as_ref()
-                        .filter(|i| i.snapshot.subagent_id == request.subagent_id)
+                        .filter(|i| i.subagent_id == request.subagent_id)
                         .cloned();
                     let _ = request.respond_to.send(value);
                 } else if let SubagentEvent::ListRunning(request) = event {
                     let list = inspect
                         .as_ref()
-                        .filter(|i| i.snapshot.is_running())
+                        .filter(|i| i.snapshot().is_some_and(|snapshot| snapshot.is_running()))
                         .cloned()
                         .into_iter()
                         .collect();
@@ -1461,7 +1460,7 @@ mod live_orphan_hook_tests {
         (actor, sub_dir, persistence_rx)
     }
 
-    fn persisted_cancelled_finishes(
+    fn persisted_terminal_finishes(
         persistence_rx: &mut tokio::sync::mpsc::UnboundedReceiver<PersistenceMsg>,
         id: &str,
     ) -> usize {
@@ -1473,9 +1472,6 @@ mod live_orphan_hook_tests {
             };
             let SessionUpdate::SubagentFinished {
                 subagent_id,
-                status,
-                error,
-                will_wake,
                 ..
             } = notif.update
             else {
@@ -1484,21 +1480,20 @@ mod live_orphan_hook_tests {
             if subagent_id != id {
                 continue;
             }
-            assert_eq!(status, "cancelled");
-            assert_eq!(error.as_deref(), Some(LIVE_ORPHAN_RECONCILE_REASON));
-            assert!(!will_wake);
             count += 1;
         }
         count
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn emit_session_idle_finalizes_orphan_and_persists_finish() {
+    async fn emit_session_idle_inspect_miss_preserves_meta_and_history() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
                 let id = "sa-idle-orphan";
                 let (actor, sub_dir, mut persistence_rx) = actor_with_orphan(id, None).await;
+                let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+                let history_before = serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap();
                 tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     actor.emit_session_idle_if_idle(),
@@ -1506,21 +1501,9 @@ mod live_orphan_hook_tests {
                 .await
                 .expect("idle reconcile must not hang");
 
-                let meta_path = sub_dir.join("meta.json");
-                let data = std::fs::read_to_string(&meta_path).unwrap_or_else(|e| {
-                    panic!(
-                        "read {}: {e}; dir_exists={} entries={:?}",
-                        meta_path.display(),
-                        sub_dir.exists(),
-                        std::fs::read_dir(&sub_dir).map(|rd| {
-                            rd.filter_map(|e| e.ok().map(|e| e.file_name()))
-                                .collect::<Vec<_>>()
-                        })
-                    )
-                });
-                let reread: SubagentMeta = serde_json::from_str(&data).unwrap();
-                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
+                assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+                assert_eq!(serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap(), history_before);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
             .await;
@@ -1541,7 +1524,7 @@ mod live_orphan_hook_tests {
                 )
                 .unwrap();
                 assert_eq!(reread.status, SubagentMetaStatus::Running);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
             .await;
@@ -1554,6 +1537,8 @@ mod live_orphan_hook_tests {
             .run_until(async {
                 let id = "sa-busy-orphan";
                 let (actor, sub_dir, mut persistence_rx) = actor_with_orphan(id, None).await;
+                let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+                let history_before = serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap();
                 actor.state.lock().await.notifications_suppressed = true;
                 actor.emit_session_idle_if_idle().await;
 
@@ -1562,7 +1547,9 @@ mod live_orphan_hook_tests {
                 )
                 .unwrap();
                 assert_eq!(reread.status, SubagentMetaStatus::Running);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
+                assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+                assert_eq!(serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap(), history_before);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
             .await;
@@ -1576,12 +1563,14 @@ mod live_orphan_hook_tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn list_running_subagents_finalizes_orphan_and_persists_finish() {
+    async fn list_running_subagents_inspect_miss_preserves_meta_and_history() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
                 let id = "sa-list-orphan";
                 let (actor, sub_dir, mut persistence_rx) = actor_with_orphan(id, None).await;
+                let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+                let history_before = serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap();
                 actor.state.lock().await.notifications_suppressed = true;
                 let listed = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
@@ -1592,12 +1581,9 @@ mod live_orphan_hook_tests {
                 .expect("coordinator ACK");
                 assert!(listed.is_empty());
 
-                let reread: SubagentMeta = serde_json::from_str(
-                    &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
-                )
-                .unwrap();
-                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
+                assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+                assert_eq!(serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap(), history_before);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
             .await;
@@ -1615,41 +1601,61 @@ mod live_orphan_hook_tests {
                 let [listed_one] = listed.as_slice() else {
                     panic!("expected one listed subagent: {listed:?}");
                 };
-                assert_eq!(listed_one.snapshot.subagent_id, id);
+                assert_eq!(listed_one.subagent_id, id);
 
                 let reread: SubagentMeta = serde_json::from_str(
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
                 assert_eq!(reread.status, SubagentMetaStatus::Running);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
             .await;
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn maybe_drain_finalizes_orphan_while_parent_turn_running() {
+    async fn maybe_drain_inspect_miss_preserves_meta_and_history() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
                 let id = "sa-drain-busy";
                 let (actor, sub_dir, mut persistence_rx) = actor_with_orphan(id, None).await;
+                let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+                let history_before = serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap();
                 // Mid-turn: idle hook is a no-op while the parent is Responding.
                 actor.state.lock().await.notifications_suppressed = true;
                 let actor = std::sync::Arc::new(actor);
                 drain_once(&actor).await;
 
-                let reread: SubagentMeta = serde_json::from_str(
-                    &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
-                )
-                .unwrap();
-                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
+                assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+                assert_eq!(serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap(), history_before);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
                 assert!(actor.last_live_orphan_reconcile.get().is_some());
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
             .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn maybe_drain_uncustodied_preserves_meta_and_history() {
+        let local = tokio::task::LocalSet::new();
+        local.run_until(async {
+            let id = "sa-drain-uncustodied";
+            let mut inspection = running_inspection(id);
+            inspection.observation = ChildObservation::Uncustodied;
+            let (actor, sub_dir, mut persistence_rx) = actor_with_orphan(id, Some(inspection)).await;
+            let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+            let history_before = serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap();
+            actor.state.lock().await.notifications_suppressed = true;
+            let actor = std::sync::Arc::new(actor);
+            drain_once(&actor).await;
+            assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+            assert_eq!(serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap(), history_before);
+            assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
+            assert!(actor.last_live_orphan_reconcile.get().is_some());
+            let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
+        }).await;
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1659,6 +1665,8 @@ mod live_orphan_hook_tests {
             .run_until(async {
                 let id = "sa-drain-throttle";
                 let (actor, sub_dir, mut persistence_rx) = actor_with_orphan(id, None).await;
+                let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+                let history_before = serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap();
                 actor.state.lock().await.notifications_suppressed = true;
                 let actor = std::sync::Arc::new(actor);
                 drain_once(&actor).await;
@@ -1666,10 +1674,7 @@ mod live_orphan_hook_tests {
                     .last_live_orphan_reconcile
                     .get()
                     .expect("first drain must scan");
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
-
-                let parent = actor.session_info.id.0.to_string();
-                write_meta(&sub_dir, &running_meta(id, &parent));
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
 
                 drain_once(&actor).await;
                 assert_eq!(
@@ -1682,18 +1687,15 @@ mod live_orphan_hook_tests {
                 )
                 .unwrap();
                 assert_eq!(reread.status, SubagentMetaStatus::Running);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
 
                 actor
                     .last_live_orphan_reconcile
                     .set(first.checked_sub(LIVE_ORPHAN_RECONCILE_INTERVAL));
                 drain_once(&actor).await;
-                let reread: SubagentMeta = serde_json::from_str(
-                    &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
-                )
-                .unwrap();
-                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
-                assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
+                assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+                assert_eq!(serde_json::to_value(actor.chat_state_handle.get_conversation().await).unwrap(), history_before);
+                assert_eq!(persisted_terminal_finishes(&mut persistence_rx, id), 0);
                 assert_ne!(actor.last_live_orphan_reconcile.get(), Some(first));
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })

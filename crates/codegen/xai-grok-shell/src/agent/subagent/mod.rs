@@ -2615,67 +2615,7 @@ fn upload_completed_subagent_metadata(
 
 pub(crate) const ORPHAN_RECONCILE_REASON: &str = "interrupted by process restart";
 pub(crate) const LIVE_ORPHAN_RECONCILE_REASON: &str = "orphaned while parent session stayed live";
-/// `SubagentFinished` for a force-terminated orphan; interrupt counts are zeroed.
-fn cancelled_orphan_finish(
-    subagent_id: String,
-    attempt_id: Option<String>,
-    child_session_id: String,
-    duration_ms: u64,
-    reason: &str,
-) -> SessionUpdate {
-    SessionUpdate::SubagentFinished {
-        attempt_id,
-        subagent_id,
-        child_session_id,
-        status: "cancelled".to_string(),
-        error: Some(reason.to_owned()),
-        tool_calls: 0,
-        turns: 0,
-        duration_ms,
-        tokens_used: 0,
-        output: None,
-        will_wake: false,
-    }
-}
-/// Flip a stale `running` meta to `cancelled` and emit the missing finish.
-/// On meta-write failure returns `false` and skips the notify, so a reload re-heals.
-fn finalize_orphaned_subagent(
-    subagent_meta_dir: &Path,
-    mut meta: SubagentMeta,
-    gateway: &GatewaySender,
-    parent_cmd_tx: Option<&mpsc::UnboundedSender<SessionCommand>>,
-    reason: &str,
-) -> bool {
-    if !is_on_disk_meta_running(subagent_meta_dir) {
-        return false;
-    }
-    let completed_at = chrono::Utc::now();
-    let duration_ms = (completed_at - meta.started_at).num_milliseconds().max(0) as u64;
-    meta.status = SubagentMetaStatus::Cancelled;
-    meta.completed_at = Some(completed_at);
-    meta.duration_ms = Some(duration_ms);
-    meta.tool_calls = Some(0);
-    meta.turns = Some(0);
-    meta.error = Some(reason.to_owned());
-    if !write_subagent_meta(subagent_meta_dir, &meta) {
-        return false;
-    }
-    emit_subagent_notification(
-        gateway,
-        &meta.parent_session_id,
-        cancelled_orphan_finish(
-            meta.subagent_id,
-            meta.attempt_id,
-            meta.child_session_id,
-            duration_ms,
-            reason,
-        ),
-        parent_cmd_tx,
-    );
-    true
-}
 /// Persist a coordinator-held terminal outcome over a stale `running` meta.
-/// Same write-then-emit durability as [`finalize_orphaned_subagent`].
 fn persist_running_meta_as_finish(
     subagent_meta_dir: &Path,
     mut meta: SubagentMeta,
@@ -2725,39 +2665,42 @@ fn running_orphan_meta(meta_path: &Path, parent_session_id: &str) -> Option<Suba
 }
 fn completed_finish_from_inspection(
     inspection: &SubagentInspection,
-    attempt_id: Option<String>,
+    meta_attempt_id: Option<&str>,
+    replay_attempt_id: Option<&str>,
 ) -> Option<SessionUpdate> {
-    let (status, error, tool_calls, turns) = match &inspection.snapshot.status {
-        SubagentSnapshotStatus::Completed {
-            tool_calls, turns, ..
-        } => ("completed", None, *tool_calls, *turns),
-        SubagentSnapshotStatus::Failed { error } => ("failed", Some(error.clone()), 0, 0),
-        SubagentSnapshotStatus::Cancelled { cause } => {
-            ("cancelled", Some(cause.model_text()), 0, 0)
-        }
-        SubagentSnapshotStatus::Initializing
-        | SubagentSnapshotStatus::Running { .. }
-        | SubagentSnapshotStatus::Finalizing { .. } => {
-            return None;
-        }
+    use xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminalState;
+    let terminal = match &inspection.observation {
+        ChildObservation::Terminal(terminal) => terminal,
+        ChildObservation::Resident { .. } | ChildObservation::Uncustodied => return None,
+    };
+    if [meta_attempt_id, replay_attempt_id]
+        .into_iter()
+        .flatten()
+        .any(|attempt| attempt != terminal.attempt_id.as_str())
+    {
+        return None;
+    }
+    let (status, error) = match &terminal.state {
+        SubagentTerminalState::Completed => ("completed", None),
+        SubagentTerminalState::Failed { message } => ("failed", Some(message.clone())),
+        SubagentTerminalState::Interrupted { cause } => ("cancelled", Some(cause.model_text())),
     };
     Some(SessionUpdate::SubagentFinished {
-        attempt_id,
-        subagent_id: inspection.snapshot.subagent_id.clone(),
+        attempt_id: Some(terminal.attempt_id.clone()),
+        subagent_id: inspection.subagent_id.clone(),
         child_session_id: inspection.child_session_id.clone(),
         status: status.to_owned(),
         error,
-        tool_calls,
-        turns,
-        duration_ms: inspection.snapshot.duration_ms,
-        tokens_used: 0,
-        output: None,
+        tool_calls: terminal.tool_calls,
+        turns: terminal.turns,
+        duration_ms: terminal.duration_ms,
+        tokens_used: terminal.tokens_used,
+        output: Some(terminal.output.to_string()),
         will_wake: false,
     })
 }
-/// Heal subagents stuck "Running" after a dead process: emit exactly one `SubagentFinished` per id. Two id-keyed sources are unioned, so a crash orphan present in both heals once.
-/// They are `unfinished` (replayed spawns whose finish a rewind dropped, or a forked-in subagent with no meta) and on-disk `running` metas. Ids still live under `parent_session_id` are skipped; a fork source's live children are not.
-/// A `running` meta becomes `cancelled`, unless the coordinator still holds its terminal result, which is then re-emitted. Runs after replay so the finish orders after the spawn. Pre-existing recovery entry point: args are independent handles/sources from two call sites, not one groupable object
+/// Re-emit confirmed terminal outcomes missing from replay or local metadata.
+/// Unknown custody leaves metadata and replay unchanged.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all)]
 pub(crate) async fn reconcile_orphaned_subagents_with_backend(
@@ -2767,7 +2710,7 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
     parent_session_id: &str,
     gateway: &GatewaySender,
     parent_cmd_tx: Option<&mpsc::UnboundedSender<SessionCommand>>,
-    orphan_reason: &str,
+    _orphan_reason: &str,
     heal_lock: Arc<tokio::sync::Mutex<()>>,
 ) {
     let _heal_guard = heal_lock.lock().await;
@@ -2803,100 +2746,48 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
                 continue;
             }
         };
-        if inspection
-            .as_ref()
-            .is_some_and(|inspection| inspection.snapshot.is_running() || inspection.terminal.is_none())
-        {
-            continue;
-        }
+        let inspection = match inspection {
+            Some(inspection) => match &inspection.observation {
+                ChildObservation::Terminal(_) => inspection,
+                ChildObservation::Resident { .. } => continue,
+                ChildObservation::Uncustodied => {
+                    tracing::warn!(subagent_id = %subagent_id, parent_session_id,
+                        "Subagent reconciliation skipped: execution custody is unavailable");
+                    continue;
+                }
+            },
+            None => {
+                tracing::warn!(subagent_id = %subagent_id, parent_session_id,
+                    "Subagent reconciliation skipped: execution custody is unconfirmed");
+                continue;
+            }
+        };
         let subagent_dir = subagents_dir.join(&subagent_id);
         let meta = std::fs::read_to_string(subagent_dir.join("meta.json"))
             .ok()
             .and_then(|data| serde_json::from_str::<SubagentMeta>(&data).ok());
+        if meta.as_ref().is_some_and(|meta| meta.parent_session_id != parent_session_id) {
+            continue;
+        }
+        let meta_attempt_id = meta.as_ref().and_then(|meta| meta.attempt_id.as_deref());
+        let replay_attempt_id = replayed_spawn.as_ref().and_then(|spawn| spawn.attempt_id.as_deref());
+        let Some(finish) = completed_finish_from_inspection(
+            &inspection, meta_attempt_id, replay_attempt_id,
+        ) else {
+            tracing::warn!(subagent_id = %subagent_id, parent_session_id,
+                "Subagent reconciliation skipped: terminal attempt does not match");
+            continue;
+        };
         match meta {
-            Some(m) if m.parent_session_id != parent_session_id => {}
-            Some(m) if m.status == SubagentMetaStatus::Running => {
-                if let Some(finish) = inspection.as_ref().and_then(|inspection| {
-                    completed_finish_from_inspection(inspection, m.attempt_id.clone())
-                }) {
-                    if persist_running_meta_as_finish(&subagent_dir, m, &finish) {
-                        tracing::info!(
-                            subagent_id = %subagent_id,
-                            parent_session_id,
-                            "Re-emitting finish for completed subagent with a lost terminal meta write"
-                        );
-                        emit_subagent_notification(
-                            gateway,
-                            parent_session_id,
-                            finish,
-                            parent_cmd_tx,
-                        );
-                    }
-                } else {
-                    tracing::info!(
-                        subagent_id = %m.subagent_id,
-                        parent_session_id,
-                        "Reconciling orphaned subagent left running by a previous process"
-                    );
-                    finalize_orphaned_subagent(
-                        &subagent_dir,
-                        m,
-                        gateway,
-                        parent_cmd_tx,
-                        orphan_reason,
-                    );
+            Some(meta) if meta.status == SubagentMetaStatus::Running => {
+                if persist_running_meta_as_finish(&subagent_dir, meta, &finish) {
+                    emit_subagent_notification(gateway, parent_session_id, finish, parent_cmd_tx);
                 }
             }
-            Some(m) => {
-                if replayed_spawn.is_none() {
-                    continue;
+            Some(_) | None => {
+                if replayed_spawn.is_some() {
+                    emit_subagent_notification(gateway, parent_session_id, finish, parent_cmd_tx);
                 }
-                tracing::info!(
-                    subagent_id = %subagent_id,
-                    parent_session_id,
-                    status = %m.status,
-                    "Re-emitting finish for rewound subagent (terminal meta survived)"
-                );
-                emit_subagent_notification(
-                    gateway,
-                    parent_session_id,
-                    SessionUpdate::SubagentFinished {
-                        attempt_id: m.attempt_id,
-                        subagent_id,
-                        child_session_id: m.child_session_id,
-                        status: m.status.to_string(),
-                        error: m.error,
-                        tool_calls: m.tool_calls.unwrap_or(0),
-                        turns: m.turns.unwrap_or(0),
-                        duration_ms: m.duration_ms.unwrap_or(0),
-                        tokens_used: 0,
-                        output: None,
-                        will_wake: false,
-                    },
-                    parent_cmd_tx,
-                );
-            }
-            None => {
-                let Some(replayed_spawn) = replayed_spawn else {
-                    continue;
-                };
-                tracing::info!(
-                    subagent_id = %subagent_id,
-                    parent_session_id,
-                    "Reconciling inherited subagent with no local meta (cancelled)"
-                );
-                emit_subagent_notification(
-                    gateway,
-                    parent_session_id,
-                    cancelled_orphan_finish(
-                        subagent_id,
-                        replayed_spawn.attempt_id,
-                        replayed_spawn.child_session_id,
-                        0,
-                        orphan_reason,
-                    ),
-                    parent_cmd_tx,
-                );
             }
         }
     }

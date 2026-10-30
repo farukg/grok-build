@@ -4,7 +4,7 @@ use xai_grok_tools::types::{KillSource, TaskSnapshot};
 use xai_tool_types::KillOutcome;
 
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentCancelOutcome, SubagentInspection, SubagentProvenance, SubagentSnapshot,
+    ChildObservation, SubagentCancelOutcome, SubagentInspection, SubagentProvenance, SubagentSnapshot,
     SubagentSnapshotStatus,
 };
 
@@ -165,14 +165,19 @@ struct SubagentLiveSnapshotDto {
     error_count: u32,
 }
 
-impl From<SubagentInspection> for SubagentLiveSnapshotDto {
-    fn from(inspection: SubagentInspection) -> Self {
-        let SubagentInspection {
-            snapshot,
-            parent_session_id,
-            child_session_id,
-            ..
-        } = inspection;
+impl TryFrom<SubagentInspection> for SubagentLiveSnapshotDto {
+    type Error = String;
+
+    fn try_from(inspection: SubagentInspection) -> Result<Self, Self::Error> {
+        let (status, duration_ms) = match inspection.observation {
+            ChildObservation::Resident { status, duration_ms } => (status, duration_ms),
+            ChildObservation::Terminal(_) => {
+                return Err(format!("Subagent '{}' is already terminal", inspection.subagent_id));
+            }
+            ChildObservation::Uncustodied => {
+                return Err(format!("Subagent '{}': execution custody is unavailable", inspection.subagent_id));
+            }
+        };
         let SubagentSnapshotStatus::Running {
             turn_count,
             tool_call_count,
@@ -181,18 +186,18 @@ impl From<SubagentInspection> for SubagentLiveSnapshotDto {
             context_usage_pct,
             tools_used,
             error_count,
-        } = snapshot.status
+        } = status
         else {
-            unreachable!("list_running returns only active children");
+            return Err(format!("Subagent '{}' is not running", inspection.subagent_id));
         };
-        Self {
-            subagent_id: snapshot.subagent_id,
-            parent_session_id,
-            child_session_id,
-            subagent_type: snapshot.subagent_type,
-            description: snapshot.description,
-            started_at_epoch_ms: snapshot.started_at_epoch_ms,
-            duration_ms: snapshot.duration_ms,
+        Ok(Self {
+            subagent_id: inspection.subagent_id,
+            parent_session_id: inspection.parent_session_id,
+            child_session_id: inspection.child_session_id,
+            subagent_type: inspection.subagent_type,
+            description: inspection.description,
+            started_at_epoch_ms: inspection.started_at_epoch_ms,
+            duration_ms,
             turn_count,
             tool_call_count,
             tokens_used,
@@ -200,7 +205,7 @@ impl From<SubagentInspection> for SubagentLiveSnapshotDto {
             context_usage_pct,
             tools_used,
             error_count,
-        }
+        })
     }
 }
 
@@ -502,14 +507,26 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
                 Ok(inspection) => inspection,
                 Err(error) => return respond(Err::<GetSubagentResponse, _>(error)),
             };
-            let terminal = inspection.as_ref().and_then(|inspection| {
-                inspection.terminal.clone().map(|result| SubagentTerminalDto {
-                    subagent_id: inspection.snapshot.subagent_id.clone(),
-                    parent_session_id: inspection.parent_session_id.clone(),
-                    child_session_id: inspection.child_session_id.clone(),
-                    result,
-                })
-            });
+            if inspection.is_none() && snapshot.is_some() {
+                return respond(Err::<GetSubagentResponse, _>(format!(
+                    "Subagent '{}': execution custody is unconfirmed", req.subagent_id
+                )));
+            }
+            let terminal = match &inspection {
+                Some(inspection) => match &inspection.observation {
+                    ChildObservation::Terminal(result) => Some(SubagentTerminalDto {
+                        subagent_id: inspection.subagent_id.clone(),
+                        parent_session_id: inspection.parent_session_id.clone(),
+                        child_session_id: inspection.child_session_id.clone(),
+                        result: result.clone(),
+                    }),
+                    ChildObservation::Resident { .. } => None,
+                    ChildObservation::Uncustodied => return respond(Err::<GetSubagentResponse, _>(
+                        format!("Subagent '{}': execution custody is unavailable", req.subagent_id)
+                    )),
+                },
+                None => None,
+            };
             let (parent_session_id, child_session_id, provenance) = inspection
                 .map(|inspection| {
                     (
@@ -542,8 +559,12 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
             };
             let subagents = inspections
                 .into_iter()
-                .map(SubagentLiveSnapshotDto::from)
-                .collect();
+                .map(SubagentLiveSnapshotDto::try_from)
+                .collect::<Result<Vec<_>, _>>();
+            let subagents = match subagents {
+                Ok(subagents) => subagents,
+                Err(error) => return respond(Err::<ListRunningSubagentsResponse, _>(error)),
+            };
             respond(Ok::<_, String>(ListRunningSubagentsResponse { subagents }))
         }
         _ => Err(acp::Error::method_not_found()),
@@ -677,14 +698,13 @@ mod tests {
     #[test]
     fn from_resolved_running_subagent_maps_all_fields() {
         let resolved = SubagentInspection {
-            terminal: None,
-            snapshot: SubagentSnapshot {
-                subagent_id: "s".into(),
-                subagent_type: "plan".into(),
-                description: "d".into(),
-                started_at_epoch_ms: 100,
+            subagent_id: "s".into(),
+            subagent_type: "plan".into(),
+            description: "d".into(),
+            started_at_epoch_ms: 100,
+            persona: None,
+            observation: ChildObservation::Resident {
                 duration_ms: 200,
-                persona: None,
                 status: SubagentSnapshotStatus::Running {
                     turn_count: 1,
                     tool_call_count: 3,
@@ -700,12 +720,54 @@ mod tests {
             fork_parent_prompt_id: None,
             resumed_from: None,
         };
-        let dto = SubagentLiveSnapshotDto::from(resolved);
+        let dto = SubagentLiveSnapshotDto::try_from(resolved.clone()).expect("running resident ACK");
         assert_eq!(dto.subagent_id, "s");
         assert_eq!(dto.parent_session_id, "p");
         assert_eq!(dto.child_session_id, "c");
         assert_eq!(dto.context_usage_pct, 50);
         assert_eq!(dto.tools_used, vec!["read_file"]);
+        assert_eq!(dto.subagent_type, "plan");
+        assert_eq!(dto.description, "d");
+        assert_eq!(dto.started_at_epoch_ms, 100);
+        assert_eq!(dto.duration_ms, 200);
+        assert_eq!(dto.turn_count, 1);
+        assert_eq!(dto.tool_call_count, 3);
+        assert_eq!(dto.tokens_used, 500);
+        assert_eq!(dto.context_window_tokens, 1000);
+        assert_eq!(dto.error_count, 0);
+        assert_eq!(serde_json::to_value(&dto).unwrap(), serde_json::json!({
+            "subagentId": "s", "parentSessionId": "p", "childSessionId": "c",
+            "subagentType": "plan", "description": "d", "startedAtEpochMs": 100,
+            "durationMs": 200, "turnCount": 1, "toolCallCount": 3, "tokensUsed": 500,
+            "contextWindowTokens": 1000, "contextUsagePct": 50,
+            "toolsUsed": ["read_file"], "errorCount": 0,
+        }));
+        let mut unavailable = resolved.clone();
+        unavailable.observation = ChildObservation::Uncustodied;
+        assert_eq!(SubagentLiveSnapshotDto::try_from(unavailable).unwrap_err(),
+            "Subagent 's': execution custody is unavailable");
+        for status in [
+            SubagentSnapshotStatus::Initializing,
+            SubagentSnapshotStatus::Completed {
+                output: "done".into(), tool_calls: 3, turns: 1, worktree_path: None,
+            },
+        ] {
+            let mut resident = resolved.clone();
+            resident.observation = ChildObservation::Resident { status, duration_ms: 200 };
+            assert_eq!(SubagentLiveSnapshotDto::try_from(resident).unwrap_err(),
+                "Subagent 's' is not running");
+        }
+        let mut terminal = resolved;
+        terminal.observation = ChildObservation::Terminal(
+            xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminal {
+                attempt_id: "attempt".into(),
+                state: xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminalState::Completed,
+                output: std::sync::Arc::from("done"),
+                tool_calls: 3, turns: 1, duration_ms: 200, tokens_used: 500,
+            },
+        );
+        assert_eq!(SubagentLiveSnapshotDto::try_from(terminal).unwrap_err(),
+            "Subagent 's' is already terminal");
     }
 
     #[test]

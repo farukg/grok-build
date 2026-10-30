@@ -1392,69 +1392,11 @@ fn durable_fallback_rejects_running_status() {
         );
     let _ = std::fs::remove_dir_all(&dir);
 }
-/// Count persisted `SubagentFinished{status:"cancelled"}` for `id` on a session cmd channel, asserting field consistency.
-fn drain_cancelled_finish_cmds(
-    cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
-    id: &str,
-    expected_error: &str,
-) -> usize {
-    let mut count = 0;
-    while let Ok(cmd) = cmd_rx.try_recv() {
-        if let SessionCommand::XaiSessionNotification { notification } = cmd
-            && let SessionUpdate::SubagentFinished {
-                subagent_id,
-                status,
-                error,
-                will_wake,
-                ..
-            } = &notification.update && subagent_id == id
-        {
-            assert_eq!(status, "cancelled");
-            assert_eq!(error.as_deref(), Some(expected_error));
-            assert!(
-                    !*will_wake,
-                    "synthesized orphan finish must not auto-wake"
-                );
-            count += 1;
-        }
-    }
-    count
-}
-/// Count live `SubagentFinished{status:"cancelled"}` for `id` broadcast to the gateway.
-/// Asserts the method and the typed payload rather than substring matching.
-fn drain_cancelled_finish_broadcasts(
-    gateway_rx: &mut mpsc::UnboundedReceiver<
-        crate::test_support::lsp_runtime::GatewayOut,
-    >,
-    id: &str,
-) -> usize {
-    let mut count = 0;
-    while let Ok(msg) = gateway_rx.try_recv() {
-        let xai_acp_lib::AcpClientMessage::ExtNotification(args) = msg else {
-            continue;
-        };
-        assert_eq!(args.request.method.as_ref(), "x.ai/session_notification");
-        let notification: SessionNotification = serde_json::from_str(
-                args.request.params.get(),
-            )
-            .expect("params must deserialize as SessionNotification");
-        if let SessionUpdate::SubagentFinished { subagent_id, status, will_wake, .. } = &notification
-            .update && subagent_id == id
-        {
-            assert_eq!(status, "cancelled");
-            assert!(
-                    !*will_wake,
-                    "synthesized orphan finish must not auto-wake"
-                );
-            count += 1;
-        }
-    }
-    count
-}
 /// A `running` meta with no terminal counterpart, as left by a dead process.
 fn running_test_meta(id: &str, parent_session_id: &str) -> SubagentMeta {
     SubagentMeta {
         subagent_id: id.into(),
+        attempt_id: Some("attempt".to_string()),
         parent_session_id: parent_session_id.into(),
         child_session_id: format!("child-{id}"),
         subagent_type: "explore".into(),
@@ -1463,41 +1405,47 @@ fn running_test_meta(id: &str, parent_session_id: &str) -> SubagentMeta {
     }
 }
 fn inspection(id: &str, status: SubagentSnapshotStatus) -> SubagentInspection {
+    use xai_grok_tools::implementations::grok_build::task::terminal::{SubagentTerminal, SubagentTerminalState};
     let terminal = match &status {
-        SubagentSnapshotStatus::Completed { output, tool_calls, turns, .. } => Some(
-            xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminal {
-                attempt_id: "attempt".to_string(),
-                state: xai_grok_tools::implementations::grok_build::task::terminal::SubagentTerminalState::Completed,
-                output: std::sync::Arc::from(output.as_str()),
-                tool_calls: *tool_calls,
-                turns: *turns,
-                duration_ms: 50,
-                tokens_used: 0,
-            },
-        ),
+        SubagentSnapshotStatus::Completed { output, tool_calls, turns, .. } => Some((
+            SubagentTerminalState::Completed, output.clone(), *tool_calls, *turns,
+        )),
+        SubagentSnapshotStatus::Failed { error } => Some((
+            SubagentTerminalState::Failed { message: error.clone() }, String::new(), 0, 0,
+        )),
+        SubagentSnapshotStatus::Cancelled { cause } => Some((
+            SubagentTerminalState::Interrupted { cause: cause.clone() }, String::new(), 0, 0,
+        )),
         SubagentSnapshotStatus::Initializing
         | SubagentSnapshotStatus::Running { .. }
-        | SubagentSnapshotStatus::Finalizing { .. }
-        | SubagentSnapshotStatus::Failed { .. }
-        | SubagentSnapshotStatus::Cancelled { .. } => None,
+        | SubagentSnapshotStatus::Finalizing { .. } => None,
+    };
+    let observation = match terminal {
+        Some((state, output, tool_calls, turns)) => ChildObservation::Terminal(SubagentTerminal {
+            attempt_id: "attempt".to_string(),
+            state,
+            output: std::sync::Arc::from(output),
+            tool_calls,
+            turns,
+            duration_ms: 50,
+            tokens_used: 123,
+        }),
+        None => ChildObservation::Resident { status, duration_ms: 50 },
     };
     SubagentInspection {
-        terminal,
-        snapshot: SubagentSnapshot {
-            subagent_id: id.to_string(),
-            description: "task".to_string(),
-            subagent_type: "explore".to_string(),
-            status,
-            started_at_epoch_ms: 0,
-            duration_ms: 50,
-            persona: None,
-        },
+        subagent_id: id.to_string(),
+        description: "task".to_string(),
+        subagent_type: "explore".to_string(),
+        started_at_epoch_ms: 0,
+        persona: None,
+        observation,
         parent_session_id: "parent-x".to_string(),
         child_session_id: format!("child-{id}"),
         fork_parent_prompt_id: None,
         resumed_from: None,
     }
 }
+
 async fn reconcile_with_inspections(
     unfinished: &[UnfinishedSubagent],
     inspections: HashMap<String, Option<SubagentInspection>>,
@@ -1582,6 +1530,158 @@ async fn live_reconcile_with_heal_lock(
     let _ = respond.await;
 }
 #[tokio::test]
+async fn reconcile_uncustodied_and_wrong_attempt_preserve_meta_and_history() {
+    for wrong_attempt in [false, true] {
+        let session_dir = tempfile::TempDir::new().unwrap();
+        let id = "custody-child";
+        let sub_dir = session_dir.path().join("subagents").join(id);
+        write_subagent_meta(&sub_dir, &running_test_meta(id, "parent-x"));
+        let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+        let mut observed = inspection(id, SubagentSnapshotStatus::Completed {
+            output: "known output".into(), tool_calls: 9, turns: 3, worktree_path: None,
+        });
+        if wrong_attempt {
+            let ChildObservation::Terminal(terminal) = &mut observed.observation else {
+                panic!("expected full terminal evidence");
+            };
+            terminal.attempt_id = "other-attempt".into();
+        } else {
+            observed.observation = ChildObservation::Uncustodied;
+        }
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        reconcile_with_inspections(
+            &[UnfinishedSubagent {
+                subagent_id: id.into(), attempt_id: Some("attempt".into()),
+                child_session_id: format!("child-{id}"),
+            }],
+            HashMap::from([(id.into(), Some(observed))]),
+            session_dir.path(), &test_gateway(), Some(&cmd_tx),
+        ).await;
+        assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+        assert!(cmd_rx.try_recv().is_err(), "replayed history must remain unchanged");
+    }
+}
+
+#[tokio::test]
+async fn reconcile_conflicting_meta_and_replay_attempts_preserve_meta_and_history() {
+    use crate::test_support::lsp_runtime::test_gateway_with_receiver;
+    for (meta_attempt, replay_attempt) in [("attempt", "other-attempt"), ("other-attempt", "attempt")] {
+        let session_dir = tempfile::TempDir::new().unwrap();
+        let id = "conflicting-attempts";
+        let sub_dir = session_dir.path().join("subagents").join(id);
+        let mut meta = running_test_meta(id, "parent-x");
+        meta.attempt_id = Some(meta_attempt.into());
+        write_subagent_meta(&sub_dir, &meta);
+        let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+        let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        reconcile_with_inspections(
+            &[UnfinishedSubagent {
+                subagent_id: id.into(), attempt_id: Some(replay_attempt.into()),
+                child_session_id: format!("child-{id}"),
+            }],
+            HashMap::from([(id.into(), Some(inspection(id, SubagentSnapshotStatus::Completed {
+                output: "done".into(), tool_calls: 7, turns: 2, worktree_path: None,
+            })))]),
+            session_dir.path(), &gateway, Some(&cmd_tx),
+        ).await;
+        assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+        assert!(cmd_rx.try_recv().is_err(), "all history commands must remain absent");
+        assert!(gateway_rx.try_recv().is_err(), "no terminal broadcast");
+    }
+}
+
+#[tokio::test]
+async fn reconcile_matching_and_missing_source_attempts_accept_full_terminal() {
+    for (meta_attempt, replay_attempt) in [
+        (Some("attempt"), Some("attempt")),
+        (Some("attempt"), None),
+        (None, Some("attempt")),
+        (None, None),
+    ] {
+        let session_dir = tempfile::TempDir::new().unwrap();
+        let id = "matching-attempts";
+        let sub_dir = session_dir.path().join("subagents").join(id);
+        let mut meta = running_test_meta(id, "parent-x");
+        meta.attempt_id = meta_attempt.map(str::to_owned);
+        write_subagent_meta(&sub_dir, &meta);
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        reconcile_with_inspections(
+            &[UnfinishedSubagent {
+                subagent_id: id.into(), attempt_id: replay_attempt.map(str::to_owned),
+                child_session_id: format!("child-{id}"),
+            }],
+            HashMap::from([(id.into(), Some(inspection(id, SubagentSnapshotStatus::Completed {
+                output: "done".into(), tool_calls: 7, turns: 2, worktree_path: None,
+            })))]),
+            session_dir.path(), &test_gateway(), Some(&cmd_tx),
+        ).await;
+        let SessionCommand::XaiSessionNotification { notification } = cmd_rx.try_recv().unwrap() else {
+            panic!("expected terminal history notification");
+        };
+        assert_eq!(notification.session_id, acp::SessionId::new("parent-x"));
+        let SessionUpdate::SubagentFinished {
+            attempt_id, subagent_id, child_session_id, status, error, tool_calls, turns,
+            duration_ms, tokens_used, output, will_wake,
+        } = notification.update else {
+            panic!("expected full terminal finish");
+        };
+        assert_eq!(attempt_id.as_deref(), Some("attempt"));
+        assert_eq!(subagent_id, "matching-attempts");
+        assert_eq!(child_session_id, "child-matching-attempts");
+        assert_eq!(status, "completed");
+        assert_eq!(error, None);
+        assert_eq!(tool_calls, 7);
+        assert_eq!(turns, 2);
+        assert_eq!(duration_ms, 50);
+        assert_eq!(tokens_used, 123);
+        assert_eq!(output.as_deref(), Some("done"));
+        assert!(!will_wake);
+        assert!(cmd_rx.try_recv().is_err(), "exactly one history command");
+        let persisted: SubagentMeta = serde_json::from_slice(
+            &std::fs::read(sub_dir.join("meta.json")).unwrap(),
+        ).unwrap();
+        assert_eq!(persisted.status, SubagentMetaStatus::Completed);
+        assert_eq!(persisted.attempt_id.as_deref(), meta_attempt);
+        assert_eq!(persisted.tool_calls, Some(7));
+        assert_eq!(persisted.turns, Some(2));
+        assert_eq!(persisted.duration_ms, Some(50));
+        assert_eq!(persisted.error, None);
+        assert!(persisted.completed_at.is_some());
+    }
+}
+
+#[tokio::test]
+async fn reconcile_lost_inspect_ack_preserves_meta_and_history() {
+    let session_dir = tempfile::TempDir::new().unwrap();
+    let id = "lost-inspect-ack";
+    let sub_dir = session_dir.path().join("subagents").join(id);
+    write_subagent_meta(&sub_dir, &running_test_meta(id, "parent-x"));
+    let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let backend = ChannelBackend::new(event_tx);
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+    let respond = async {
+        let Some(SubagentEvent::Inspect(request)) = event_rx.recv().await else {
+            panic!("expected inspection");
+        };
+        assert_eq!(request.subagent_id, id);
+        drop(request.respond_to);
+    };
+    let gateway = test_gateway();
+    tokio::join!(
+        reconcile_orphaned_subagents_with_backend(
+            &[], &backend, session_dir.path(), "parent-x", &gateway,
+            Some(&cmd_tx), ORPHAN_RECONCILE_REASON,
+            std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        ),
+        respond,
+    );
+    assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+    assert!(cmd_rx.try_recv().is_err(), "history must remain unchanged on transport loss");
+}
+
+#[tokio::test]
 async fn reconcile_preserves_meta_when_completed_snapshot_has_no_terminal_evidence() {
     let session_dir = tempfile::TempDir::new().unwrap();
     let id = "sa-output-unavailable";
@@ -1594,7 +1694,12 @@ async fn reconcile_preserves_meta_when_completed_snapshot_has_no_terminal_eviden
         turns: 2,
         worktree_path: None,
     });
-    observed.terminal = None;
+    observed.observation = ChildObservation::Resident {
+        status: SubagentSnapshotStatus::Completed {
+            output: "output unavailable".to_string(), tool_calls: 7, turns: 2, worktree_path: None,
+        },
+        duration_ms: 50,
+    };
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     reconcile_with_inspections(
         &[],
@@ -1608,13 +1713,14 @@ async fn reconcile_preserves_meta_when_completed_snapshot_has_no_terminal_eviden
 }
 
 #[tokio::test]
-async fn reconcile_orphan_flips_running_meta_to_cancelled() {
+async fn reconcile_inspect_miss_preserves_meta_and_history() {
     use crate::test_support::lsp_runtime::test_gateway_with_receiver;
     let session_dir = tempfile::TempDir::new().unwrap();
     let id = "sa-orphan";
     let sub_dir = session_dir.path().join("subagents").join(id);
     write_subagent_meta(&sub_dir, &running_test_meta(id, "parent-x"));
     let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+    let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     reconcile_with_inspections(
             &[],
@@ -1624,21 +1730,9 @@ async fn reconcile_orphan_flips_running_meta_to_cancelled() {
             Some(&cmd_tx),
         )
         .await;
-    let reread: SubagentMeta = serde_json::from_str(
-            &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
-        )
-        .unwrap();
-    assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
-    assert_eq!(reread.tool_calls, Some(0));
-    assert_eq!(reread.turns, Some(0));
-    assert_eq!(
-            drain_cancelled_finish_cmds(&mut cmd_rx, id, ORPHAN_RECONCILE_REASON),
-            1
-        );
-    assert_eq!(
-            drain_cancelled_finish_broadcasts(&mut gateway_rx, id),
-            1
-        );
+    assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+    assert!(cmd_rx.try_recv().is_err(), "history must not receive a terminal update");
+    assert!(gateway_rx.try_recv().is_err(), "no terminal broadcast");
 }
 #[tokio::test]
 async fn reconcile_orphan_skips_shared_actor_live_child() {
@@ -1706,10 +1800,20 @@ async fn reconcile_reemits_shared_actor_terminal_outcome() {
             let SessionCommand::XaiSessionNotification { notification } = command else {
                 return None;
             };
-            let SessionUpdate::SubagentFinished { status, tool_calls, .. } = notification
-                .update else {
+            let SessionUpdate::SubagentFinished {
+                attempt_id, child_session_id, status, error, tool_calls, turns,
+                duration_ms, tokens_used, output, will_wake, ..
+            } = notification.update else {
                 return None;
             };
+            assert_eq!(attempt_id.as_deref(), Some("attempt"));
+            assert_eq!(child_session_id, format!("child-{id}"));
+            assert_eq!(error, None);
+            assert_eq!(turns, 2);
+            assert_eq!(duration_ms, 50);
+            assert_eq!(tokens_used, 123);
+            assert_eq!(output.as_deref(), Some("done"));
+            assert!(!will_wake);
             Some((status, tool_calls))
         });
     assert_eq!(finish, Some(("completed".to_string(), 7)));
@@ -1722,13 +1826,14 @@ async fn reconcile_reemits_shared_actor_terminal_outcome() {
     assert_eq!(reread.turns, Some(2));
 }
 #[tokio::test]
-async fn live_reconcile_finalizes_running_meta_not_in_coordinator() {
+async fn live_reconcile_inspect_miss_preserves_meta_and_history() {
     use crate::test_support::lsp_runtime::test_gateway_with_receiver;
     let session_dir = tempfile::TempDir::new().unwrap();
     let id = "sa-live-orphan";
     let sub_dir = session_dir.path().join("subagents").join(id);
     write_subagent_meta(&sub_dir, &running_test_meta(id, "parent-x"));
     let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+    let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     live_reconcile_with_inspections(
             HashMap::from([(id.to_string(), None)]),
@@ -1737,21 +1842,9 @@ async fn live_reconcile_finalizes_running_meta_not_in_coordinator() {
             Some(&cmd_tx),
         )
         .await;
-    let reread: SubagentMeta = serde_json::from_str(
-            &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
-        )
-        .unwrap();
-    assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
-    assert_eq!(reread.tool_calls, Some(0));
-    assert_eq!(reread.turns, Some(0));
-    assert_eq!(
-            drain_cancelled_finish_cmds(&mut cmd_rx, id, LIVE_ORPHAN_RECONCILE_REASON),
-            1
-        );
-    assert_eq!(
-            drain_cancelled_finish_broadcasts(&mut gateway_rx, id),
-            1
-        );
+    assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+    assert!(cmd_rx.try_recv().is_err(), "history must not receive a terminal update");
+    assert!(gateway_rx.try_recv().is_err(), "no terminal broadcast");
 }
 #[tokio::test]
 async fn live_reconcile_skips_live_coordinator_child() {
@@ -2063,11 +2156,12 @@ async fn live_reconcile_persists_failed_and_cancelled_inspection() {
     }
 }
 #[tokio::test]
-async fn reconcile_dedups_replay_and_running_meta_sources() {
+async fn reconcile_inspect_miss_preserves_replayed_spawn_and_meta() {
     let session_dir = tempfile::TempDir::new().unwrap();
     let id = "sa-crash";
     let sub_dir = session_dir.path().join("subagents").join(id);
     write_subagent_meta(&sub_dir, &running_test_meta(id, "parent-x"));
+    let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     reconcile_with_inspections(
             &[
@@ -2083,10 +2177,8 @@ async fn reconcile_dedups_replay_and_running_meta_sources() {
             Some(&cmd_tx),
         )
         .await;
-    assert_eq!(
-            drain_cancelled_finish_cmds(&mut cmd_rx, id, ORPHAN_RECONCILE_REASON),
-            1
-        );
+    assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+    assert!(cmd_rx.try_recv().is_err(), "history must not receive a terminal update");
 }
 #[test]
 fn resume_rejects_conflicting_subagent_type() {

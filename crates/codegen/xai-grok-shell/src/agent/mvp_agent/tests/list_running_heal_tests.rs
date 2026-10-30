@@ -1,13 +1,12 @@
-//! `list_running_subagents` must heal a live parent's stale `running` meta (tray / reconnect).
-//! Deleting that hook leaves the tray showing a dead subagent as Responding for 10-12 hours.
+//! Inventory misses do not establish a terminal outcome.
 
 use super::{build_minimal_agent_for_tests, make_live_session_handle};
-use crate::agent::subagent::{LIVE_ORPHAN_RECONCILE_REASON, SubagentMeta, SubagentMetaStatus};
+use crate::agent::subagent::{SubagentMeta, SubagentMetaStatus};
 use crate::extensions::notification::SessionUpdate;
 use crate::session::SessionCommand;
 use agent_client_protocol as acp;
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentEvent, SubagentInspection, SubagentSnapshot, SubagentSnapshotStatus,
+    ChildObservation, SubagentEvent, SubagentInspection, SubagentSnapshotStatus,
 };
 
 fn running_meta(id: &str, parent: &str) -> SubagentMeta {
@@ -47,11 +46,13 @@ fn write_meta(dir: &std::path::Path, meta: &SubagentMeta) {
 
 fn running_inspection(id: &str, parent: &str) -> SubagentInspection {
     SubagentInspection {
-        terminal: None,
-        snapshot: SubagentSnapshot {
-            subagent_id: id.to_string(),
-            description: "task".to_string(),
-            subagent_type: "explore".to_string(),
+        subagent_id: id.to_string(),
+        description: "task".to_string(),
+        subagent_type: "explore".to_string(),
+        started_at_epoch_ms: 0,
+        persona: None,
+        observation: ChildObservation::Resident {
+            duration_ms: 50,
             status: SubagentSnapshotStatus::Running {
                 turn_count: 1,
                 tool_call_count: 0,
@@ -61,9 +62,6 @@ fn running_inspection(id: &str, parent: &str) -> SubagentInspection {
                 tools_used: Vec::new(),
                 error_count: 0,
             },
-            started_at_epoch_ms: 0,
-            duration_ms: 50,
-            persona: None,
         },
         parent_session_id: parent.to_string(),
         child_session_id: format!("child-{id}"),
@@ -72,7 +70,7 @@ fn running_inspection(id: &str, parent: &str) -> SubagentInspection {
     }
 }
 
-fn drain_cancelled_finishes(
+fn drain_terminal_finishes(
     cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<SessionCommand>,
     id: &str,
 ) -> usize {
@@ -83,9 +81,6 @@ fn drain_cancelled_finishes(
         };
         let SessionUpdate::SubagentFinished {
             subagent_id,
-            status,
-            error,
-            will_wake,
             ..
         } = notification.update
         else {
@@ -94,9 +89,6 @@ fn drain_cancelled_finishes(
         if subagent_id != id {
             continue;
         }
-        assert_eq!(status, "cancelled");
-        assert_eq!(error.as_deref(), Some(LIVE_ORPHAN_RECONCILE_REASON));
-        assert!(!will_wake);
         count += 1;
     }
     count
@@ -112,13 +104,13 @@ fn spawn_inspect_stub(
             if let SubagentEvent::Inspect(request) = event {
                 let value = inspect
                     .as_ref()
-                    .filter(|i| i.snapshot.subagent_id == request.subagent_id)
+                    .filter(|i| i.subagent_id == request.subagent_id)
                     .cloned();
                 let _ = request.respond_to.send(value);
             } else if let SubagentEvent::ListRunning(request) = event {
                 let list = inspect
                     .as_ref()
-                    .filter(|i| i.snapshot.is_running())
+                    .filter(|i| i.snapshot().is_some_and(|snapshot| snapshot.is_running()))
                     .cloned()
                     .into_iter()
                     .collect();
@@ -160,13 +152,14 @@ async fn live_session_with_running_meta(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn list_running_subagents_finalizes_orphan_on_live_session() {
+async fn list_running_subagents_inspect_miss_preserves_meta_and_history() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
             let id = "sa-list-orphan";
             let (agent, parent, sub_dir, mut cmd_rx) =
                 live_session_with_running_meta(id, None).await;
+            let before = std::fs::read(sub_dir.join("meta.json")).unwrap();
 
             let listed = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
@@ -177,11 +170,8 @@ async fn list_running_subagents_finalizes_orphan_on_live_session() {
             .expect("coordinator ACK");
             assert!(listed.is_empty());
 
-            let reread: SubagentMeta =
-                serde_json::from_str(&std::fs::read_to_string(sub_dir.join("meta.json")).unwrap())
-                    .unwrap();
-            assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
-            assert_eq!(drain_cancelled_finishes(&mut cmd_rx, id), 1);
+            assert_eq!(std::fs::read(sub_dir.join("meta.json")).unwrap(), before);
+            assert!(cmd_rx.try_recv().is_err(), "history must remain unchanged");
             let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
         })
         .await;
@@ -201,13 +191,13 @@ async fn list_running_subagents_skips_live_coordinator_child() {
             let Some(first) = listed.first() else {
                 panic!("expected one running subagent: {listed:?}");
             };
-            assert_eq!(first.snapshot.subagent_id, id);
+            assert_eq!(first.subagent_id, id);
 
             let reread: SubagentMeta =
                 serde_json::from_str(&std::fs::read_to_string(sub_dir.join("meta.json")).unwrap())
                     .unwrap();
             assert_eq!(reread.status, SubagentMetaStatus::Running);
-            assert_eq!(drain_cancelled_finishes(&mut cmd_rx, id), 0);
+            assert_eq!(drain_terminal_finishes(&mut cmd_rx, id), 0);
             let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
         })
         .await;
@@ -272,7 +262,7 @@ async fn subagent_get_lost_terminal_refresh_ack_is_an_error() {
                 panic!("expected snapshot query");
             };
             assert_eq!(request.subagent_id, "completed-child");
-            let mut snapshot = running_inspection("completed-child", "parent").snapshot;
+            let mut snapshot = running_inspection("completed-child", "parent").snapshot().unwrap();
             snapshot.status = SubagentSnapshotStatus::Completed {
                 output: "committed output".into(),
                 tool_calls: 3,
@@ -369,6 +359,112 @@ async fn subagent_get_query_transport_errors_skip_terminal_refresh() {
                 "Subagent request not confirmed: coordinator unavailable or response lost"
             ));
             assert!(event_rx.try_recv().is_err(), "failed query must not issue inspect");
+        }
+    }).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn subagent_get_refresh_preserves_custody_identity_and_terminal_evidence() {
+    use xai_grok_tools::implementations::grok_build::task::terminal::{SubagentTerminal, SubagentTerminalState};
+    let local = tokio::task::LocalSet::new();
+    local.run_until(async {
+        #[derive(Clone, Copy)]
+        enum Case { Terminal, ResidentCompleted, Uncustodied, InspectMiss, DoubleMiss, KnownIdentity }
+        for case in [Case::Terminal, Case::ResidentCompleted, Case::Uncustodied,
+            Case::InspectMiss, Case::DoubleMiss, Case::KnownIdentity] {
+            let agent = build_minimal_agent_for_tests();
+            let mut event_rx = agent.subagent_event_rx.borrow_mut().take().unwrap()
+                .into_event_receiver();
+            let req = acp::ExtRequest::new(
+                "x.ai/subagent/get",
+                serde_json::value::to_raw_value(&serde_json::json!({
+                    "subagentId": "child", "block": false
+                })).unwrap().into(),
+            );
+            let terminal = SubagentTerminal {
+                attempt_id: "attempt-child".into(),
+                state: SubagentTerminalState::Completed,
+                output: std::sync::Arc::from("exact terminal output"),
+                tool_calls: 17, turns: 4, duration_ms: 987, tokens_used: 654,
+            };
+            let mut inspection = running_inspection("child", "parent");
+            inspection.fork_parent_prompt_id = Some("fork-prompt".into());
+            inspection.resumed_from = Some("previous-child".into());
+            let mut snapshot = inspection.snapshot().unwrap();
+            snapshot.status = SubagentSnapshotStatus::Completed {
+                output: "query output is not terminal evidence".into(),
+                tool_calls: 2, turns: 1, worktree_path: None,
+            };
+            inspection.observation = match case {
+                Case::Terminal => ChildObservation::Terminal(terminal.clone()),
+                Case::ResidentCompleted => ChildObservation::Resident {
+                    status: snapshot.status.clone(), duration_ms: 50,
+                },
+                Case::Uncustodied => ChildObservation::Uncustodied,
+                Case::InspectMiss | Case::DoubleMiss | Case::KnownIdentity => inspection.observation,
+            };
+            let query = match case {
+                Case::DoubleMiss => None,
+                Case::Terminal | Case::ResidentCompleted | Case::Uncustodied
+                | Case::InspectMiss | Case::KnownIdentity => Some(snapshot),
+            };
+            let inspect = match case {
+                Case::InspectMiss | Case::DoubleMiss => None,
+                Case::Terminal | Case::ResidentCompleted | Case::Uncustodied
+                | Case::KnownIdentity => Some(inspection),
+            };
+            let responder = async move {
+                let Some(SubagentEvent::Query(request)) = event_rx.recv().await else {
+                    panic!("expected query");
+                };
+                assert_eq!(request.subagent_id, "child");
+                request.respond_to.send(query).unwrap();
+                let Some(SubagentEvent::Inspect(request)) = event_rx.recv().await else {
+                    panic!("expected refresh");
+                };
+                assert_eq!(request.subagent_id, "child");
+                request.respond_to.send(inspect).unwrap();
+            };
+            let (response, ()) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                async { tokio::join!(crate::extensions::task::handle_subagent(&agent, &req), responder) },
+            ).await.expect("refresh must not hang");
+            let response = response.expect("public response envelope");
+            let value: serde_json::Value = serde_json::from_str(response.0.get()).unwrap();
+            match case {
+                Case::Uncustodied | Case::InspectMiss => {
+                    assert!(value["result"].is_null());
+                    let expected = match case {
+                        Case::Uncustodied => "Subagent 'child': execution custody is unavailable",
+                        Case::InspectMiss => "Subagent 'child': execution custody is unconfirmed",
+                        Case::Terminal | Case::ResidentCompleted | Case::DoubleMiss | Case::KnownIdentity => unreachable!(),
+                    };
+                    assert_eq!(value["error"], expected);
+                }
+                Case::DoubleMiss => {
+                    assert!(value["error"].is_null());
+                    assert_eq!(value["result"], serde_json::json!({"snapshot": null}));
+                }
+                Case::Terminal | Case::ResidentCompleted | Case::KnownIdentity => {
+                    assert!(value["error"].is_null());
+                    assert_eq!(value["result"]["snapshot"]["parentSessionId"], "parent");
+                    assert_eq!(value["result"]["snapshot"]["childSessionId"], "child-child");
+                    assert_eq!(value["result"]["snapshot"]["forkParentPromptId"], "fork-prompt");
+                    assert_eq!(value["result"]["snapshot"]["resumedFrom"], "previous-child");
+                    match case {
+                        Case::Terminal => assert_eq!(value["result"]["terminal"], serde_json::json!({
+                            "subagentId": "child", "parentSessionId": "parent", "childSessionId": "child-child",
+                            "result": {
+                                "attemptId": "attempt-child", "state": {"status": "completed"},
+                                "output": "exact terminal output", "toolCalls": 17,
+                                "turns": 4, "durationMs": 987, "tokensUsed": 654,
+                            },
+                        })),
+                        Case::ResidentCompleted | Case::KnownIdentity => assert!(value["result"].get("terminal").is_none()),
+                        Case::Uncustodied | Case::InspectMiss | Case::DoubleMiss => unreachable!(),
+                    }
+                }
+            }
         }
     }).await;
 }

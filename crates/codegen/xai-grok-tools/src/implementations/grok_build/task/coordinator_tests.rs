@@ -3391,7 +3391,7 @@ async fn nested_spawner_lists_grandchild_in_list_running_and_list_active() {
         .await
         .expect("coordinator ACK")
         .into_iter()
-        .map(|inspection| inspection.snapshot.subagent_id)
+        .map(|inspection| inspection.subagent_id)
         .collect();
     assert_eq!(from_child, ["grandchild"]);
     let mut from_root: Vec<_> = parent_backend(&harness)
@@ -3399,7 +3399,7 @@ async fn nested_spawner_lists_grandchild_in_list_running_and_list_active() {
         .await
         .expect("coordinator ACK")
         .into_iter()
-        .map(|inspection| inspection.snapshot.subagent_id)
+        .map(|inspection| inspection.subagent_id)
         .collect();
     from_root.sort();
     assert_eq!(from_root, ["child", "grandchild"]);
