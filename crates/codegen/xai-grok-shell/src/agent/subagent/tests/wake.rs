@@ -126,6 +126,7 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
 fn prior_wake_meta(id: &str, model_id: &str) -> SubagentMeta {
     SubagentMeta {
         subagent_id: id.to_owned(),
+        recorded_owner: None,
         attempt_id: Some("at1.prior".to_owned()),
         parent_session_id: "setup-parent".to_owned(),
         child_session_id: id.to_owned(),
@@ -674,6 +675,7 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
                 .await
                 .expect("mock server");
             server.set_response("ordinary output");
+            server.hold_agent_completions();
             let id = uuid::Uuid::now_v7().to_string();
             let mut ctx = ctx_with_toggle(HashMap::new());
             configure_completion_harness(
@@ -707,11 +709,20 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
             let mut request = auto_wake_test_request(&id);
             request.runtime_overrides.isolation =
                 Some(xai_tool_types::SubagentIsolationMode::Worktree);
-            let result = backend
-                .spawn(request, None, None)
-                .await
-                .expect("ordinary spawn");
+            request.owner = SubagentOwner::Workflow { run_id: "workflow-prepared-failure-run-42".into() };
+            let spawn_backend = backend.clone();
+            let spawning = tokio::task::spawn_local(async move { spawn_backend.spawn(request, None, None).await });
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                while server.request_count() == 0 {
+                    tokio::task::yield_now().await;
+                }
+            }).await.expect("worker continues after Prepared metadata failure");
+            assert!(!meta_dir.join("meta.json").exists(), "Prepared write must actually fail");
+            server.release_agent_completions();
+            let result = spawning.await.expect("spawn task").expect("ordinary spawn");
             assert!(result.success());
+            assert!(matches!(result.state, SubagentState::Completed));
+            assert!(result.output.contains("ordinary output"));
             let output = result.output.to_string();
             assert_eq!(
                 read_subagent_output(&meta_dir).as_deref(),
@@ -722,6 +733,11 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
             )
             .expect("metadata");
             assert_eq!(persisted.status, SubagentMetaStatus::Completed);
+            assert_eq!(persisted.recorded_owner, Some(RecordedSubagentOwner::Workflow {
+                run_id: "workflow-prepared-failure-run-42".into(),
+            }));
+            assert_eq!(serde_json::to_value(&persisted).unwrap()["recorded_owner"],
+                serde_json::json!({"kind": "workflow", "run_id": "workflow-prepared-failure-run-42"}));
             let worktree = persisted.worktree_path.as_deref().expect("worktree path");
             assert!(!std::path::Path::new(worktree).exists());
             assert!(persisted.snapshot_ref.is_some());
@@ -812,6 +828,25 @@ async fn ordinary_spawn_disposes_worktree_when_only_remote_settings_enable_snaps
 /// ahead of the first turn, and teardown releases it.
 #[tokio::test(flavor = "current_thread")]
 async fn ordinary_spawn_binds_the_child_workspace_session_before_its_first_turn() {
+    assert_native_producer_records_owner_before_first_turn(
+        SubagentOwner::Task,
+        RecordedSubagentOwner::Task,
+        serde_json::json!({"kind": "task"}),
+    ).await;
+}
+#[tokio::test(flavor = "current_thread")]
+async fn native_workflow_producer_records_owner_before_first_turn() {
+    assert_native_producer_records_owner_before_first_turn(
+        SubagentOwner::Workflow { run_id: "workflow-native-run-42".into() },
+        RecordedSubagentOwner::Workflow { run_id: "workflow-native-run-42".into() },
+        serde_json::json!({"kind": "workflow", "run_id": "workflow-native-run-42"}),
+    ).await;
+}
+async fn assert_native_producer_records_owner_before_first_turn(
+    owner: SubagentOwner,
+    recorded_owner: RecordedSubagentOwner,
+    wire: serde_json::Value,
+) {
     use xai_grok_tools::implementations::grok_build::task::backend::{
         ChannelBackend, SubagentBackend,
     };
@@ -842,7 +877,7 @@ async fn ordinary_spawn_binds_the_child_workspace_session_before_its_first_turn(
             let (parent_cmd_tx, parent_cmd_rx) = mpsc::unbounded_channel();
             ctx.parent_cmd_tx = Some(parent_cmd_tx);
             let usage_ack = tokio::task::spawn_local(acknowledge_parent_usage(parent_cmd_rx));
-            let (gateway, _gateway_rx) = test_gateway_with_receiver();
+            let (gateway, mut gateway_rx) = test_gateway_with_receiver();
             let (command_tx, command_rx) =
                 SubagentCoordinator::<RunShellChildTestRunner>::channel();
             let coordinator = tokio::task::spawn_local(
@@ -854,9 +889,11 @@ async fn ordinary_spawn_binds_the_child_workspace_session_before_its_first_turn(
                 .run(),
             );
             let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
-            let request = auto_wake_test_request(&id);
+            let mut request = auto_wake_test_request(&id);
+            request.owner = owner;
+            let spawn_backend = backend.clone();
             let spawned =
-                tokio::task::spawn_local(async move { backend.spawn(request, None, None).await });
+                tokio::task::spawn_local(async move { spawn_backend.spawn(request, None, None).await });
             let first_turn_at_model = async {
                 while server.request_count() == 0 {
                     tokio::task::yield_now().await;
@@ -872,14 +909,46 @@ async fn ordinary_spawn_binds_the_child_workspace_session_before_its_first_turn(
                 workspace.session(&id).is_some(),
                 "the child's toolset is bound before its first turn dispatches"
             );
+            let initial_bytes = std::fs::read(meta_dir.join("meta.json")).expect("published start metadata");
+            let initial: SubagentMeta = serde_json::from_slice(&initial_bytes).unwrap();
+            assert_eq!(initial.recorded_owner, Some(recorded_owner.clone()));
+            assert_eq!(initial.subagent_id, id);
+            assert_eq!(initial.child_session_id, id);
+            assert_eq!(initial.parent_session_id, "setup-parent");
+            assert_eq!(initial.effective_model_id.as_deref(), Some("test-model"));
+            assert!(initial.attempt_id.is_some());
+            assert_eq!(initial.status, SubagentMetaStatus::Running);
+            assert!(initial.completed_at.is_none());
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(&initial_bytes).unwrap()["recorded_owner"], wire);
+            let running = backend.query(&id, false, None, None).await.unwrap().expect("Started child");
+            assert!(matches!(running.status, SubagentSnapshotStatus::Running { .. }));
+            assert!(std::iter::from_fn(|| gateway_rx.try_recv().ok()).any(|message| matches!(
+                message,
+                xai_acp_lib::AcpClientMessage::ExtNotification(args)
+                    if args.request.params.get().contains("subagent_spawned")
+            )), "actual start publication before the parked first sample");
+            let start = SubagentSessionMetadata::from_meta(
+                &initial, None, None, None, None, None, None, None, None, 0,
+            );
+            assert_eq!(serde_json::to_value(start).unwrap()["recordedOwner"], wire);
             server.release_agent_completions();
             let result = spawned.await.expect("spawn task").expect("ordinary spawn");
             assert!(result.success());
+            assert!(matches!(result.state, SubagentState::Completed));
+            assert!(result.output.contains("bound output"));
             assert!(
                 workspace.session(&id).is_none(),
                 "teardown releases the child's binding"
             );
 
+            let terminal: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
+            assert_eq!(terminal.status, SubagentMetaStatus::Completed);
+            assert_eq!(terminal.recorded_owner, Some(recorded_owner));
+            let completion = SubagentSessionMetadata::from_meta(
+                &terminal, None, None, None, None, None, None, None, None, 0,
+            );
+            assert_eq!(serde_json::to_value(completion).unwrap()["recordedOwner"], wire);
+            drop(backend);
             coordinator.await.expect("coordinator");
             usage_ack.abort();
         })

@@ -263,6 +263,30 @@ run_tests xai-grok-shell lib --all-executed \
     -- --exact || status=$?
 
 run_tests xai-grok-shell lib --all-executed \
+    'agent::subagent::tests::rest::recorded_owner_persistence_and_canonical_lifecycle_use_the_same_wire_evidence' \
+    'agent::subagent::tests::rest::recorded_owner_legacy_null_and_unknown_fields_remain_compatible' \
+    'agent::subagent::tests::rest::recorded_owner_invalid_evidence_fails_through_the_metadata_decode_owner' \
+    'agent::subagent::tests::rest::snapshot_ref_write_promotes_nonterminal_status_to_terminal' \
+    'agent::subagent::tests::rest::snapshot_completion_preserves_recorded_task_owner' \
+    'agent::subagent::tests::rest::snapshot_completion_preserves_recorded_workflow_owner' \
+    'session::storage::jsonl::completion::tests::metadata::producer_commit_materializes_terminal_metadata_without_parent_publication' \
+    'upload::trace::tests::upload_subagent_metadata_is_bounded_against_a_tarpit' \
+    -- --exact || status=$?
+
+# Native producers own a worker runtime and run in separate processes.
+run_tests xai-grok-shell lib --all-executed \
+    'agent::subagent::tests::wake::ordinary_spawn_binds_the_child_workspace_session_before_its_first_turn' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'agent::subagent::tests::wake::native_workflow_producer_records_owner_before_first_turn' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'agent::subagent::tests::wake::ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_worktree' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
     'extensions::task::tests::' \
     'agent::subagent::tests::rest::reconcile_' \
     'agent::subagent::tests::rest::live_reconcile_' \

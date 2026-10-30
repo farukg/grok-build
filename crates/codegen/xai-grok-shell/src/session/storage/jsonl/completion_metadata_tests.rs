@@ -1,10 +1,12 @@
 use super::*;
-use crate::agent::subagent::{SubagentMeta, SubagentMetaStatus};
+use crate::agent::subagent::{
+    RecordedSubagentOwner, SubagentMeta, SubagentMetaStatus, SubagentSessionMetadata,
+};
 use crate::extensions::subagent_context::SubagentContext;
 
 #[tokio::test]
 async fn producer_commit_materializes_terminal_metadata_without_parent_publication() {
-    for (state, status, error, policy) in [
+    for (state, status, error, policy, recorded_owner) in [
         (
             SubagentState::Completed,
             SubagentMetaStatus::Completed,
@@ -39,7 +41,19 @@ async fn producer_commit_materializes_terminal_metadata_without_parent_publicati
             Some("Subagent was stopped by human user."),
             CompletionEventPolicy::Silent,
         ),
-    ] {
+    ]
+    .into_iter()
+    .flat_map(|(state, status, error, policy)| {
+        [
+            None,
+            Some(RecordedSubagentOwner::Task),
+            Some(RecordedSubagentOwner::Workflow {
+                run_id: "workflow-journal-run-17".into(),
+            }),
+        ]
+        .into_iter()
+        .map(move |owner| (state.clone(), status, error, policy, owner))
+    }) {
         let (directory, storage, info) = fixture().await;
         let mut outcome = event(
             "child",
@@ -49,6 +63,7 @@ async fn producer_commit_materializes_terminal_metadata_without_parent_publicati
         outcome.policy = policy;
         let metadata = SubagentMeta {
             subagent_id: outcome.id.subagent_id.clone(),
+            recorded_owner: recorded_owner.clone(),
             attempt_id: Some(outcome.id.attempt_id.to_string()),
             parent_session_id: info.id.to_string(),
             child_session_id: outcome.child_session_id.clone(),
@@ -84,6 +99,7 @@ async fn producer_commit_materializes_terminal_metadata_without_parent_publicati
             .await
             .unwrap();
         let terminal = read();
+        assert_eq!(terminal.recorded_owner, recorded_owner);
         assert_eq!(terminal.status, status);
         assert_eq!(terminal.error.as_deref(), error);
         assert_eq!(terminal.completed_at, Some(outcome.completed_at));
@@ -113,7 +129,7 @@ async fn producer_commit_materializes_terminal_metadata_without_parent_publicati
             committed,
             "producer replay preserves the committed timestamp and metadata"
         );
-        std::fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        std::fs::remove_file(&path).unwrap();
         let reloaded =
             JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
         let recovered = reloaded.recover_subagent_completions(&info).await.unwrap();
@@ -122,6 +138,28 @@ async fn producer_commit_materializes_terminal_metadata_without_parent_publicati
             committed,
             "recovery materializes the committed outcome after a crash before the metadata write"
         );
+        let materialized = read();
+        assert_eq!(materialized.recorded_owner, recorded_owner);
+        let canonical = SubagentSessionMetadata::from_meta(
+            &materialized, None, None, None, None, None, None, None, None, 0,
+        );
+        assert_eq!(canonical.recorded_owner, recorded_owner);
+        let local_json = serde_json::to_value(&materialized).unwrap();
+        let canonical_json = serde_json::to_value(&canonical).unwrap();
+        let expected_owner = match &recorded_owner {
+            None => None,
+            Some(RecordedSubagentOwner::Task) => Some(serde_json::json!({"kind": "task"})),
+            Some(RecordedSubagentOwner::Workflow { .. }) => Some(serde_json::json!({
+                "kind": "workflow",
+                "run_id": "workflow-journal-run-17",
+            })),
+        };
+        assert_eq!(local_json.get("recorded_owner"), expected_owner.as_ref());
+        assert_eq!(canonical_json.get("recordedOwner"), expected_owner.as_ref());
+        assert!(local_json.get("recordedOwner").is_none());
+        assert!(canonical_json.get("recorded_owner").is_none());
+        let decoded: SubagentSessionMetadata = serde_json::from_value(canonical_json).unwrap();
+        assert_eq!(decoded.recorded_owner, recorded_owner);
         match policy {
             CompletionEventPolicy::Automatic | CompletionEventPolicy::BoundaryOnly => {
                 assert!(

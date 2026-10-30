@@ -25,7 +25,9 @@ use xai_grok_tools::implementations::grok_build::task::model_policy;
 use xai_grok_tools::implementations::grok_build::task::native_recovery::{
     ArtifactCapabilityRef, NativeWakeCustody, NativeWakeLaunch, NativeWakeMode, RecoveryPublication,
 };
-use xai_grok_tools::implementations::grok_build::task::types::SubagentCapabilityModeExt;
+use xai_grok_tools::implementations::grok_build::task::types::{
+    SubagentCapabilityModeExt, SubagentOwner,
+};
 use xai_grok_tools::implementations::{grok_build, opencode};
 use xai_grok_tools::types::tool::ToolKind;
 static SUBAGENTS_ACTIVE: xai_grok_telemetry::activity::ActivityGauge =
@@ -1140,6 +1142,12 @@ pub(crate) async fn run_shell_child(
     }
     let subagent_meta = SubagentMeta {
         subagent_id: subagent_id.clone(),
+        recorded_owner: Some(match &request.owner {
+            SubagentOwner::Task => RecordedSubagentOwner::Task,
+            SubagentOwner::Workflow { run_id } => RecordedSubagentOwner::Workflow {
+                run_id: run_id.clone(),
+            },
+        }),
         attempt_id: attempt_id.clone(),
         parent_session_id: ctx.parent_session_id.clone(),
         child_session_id: child_session_id.0.to_string(),

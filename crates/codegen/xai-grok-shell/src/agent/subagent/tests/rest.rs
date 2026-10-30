@@ -426,10 +426,119 @@ fn backward_compat_meta_without_snapshot_ref() {
     let meta: SubagentMeta = serde_json::from_str(json).unwrap();
     assert!(meta.snapshot_ref.is_none());
 }
+#[test]
+fn recorded_owner_persistence_and_canonical_lifecycle_use_the_same_wire_evidence() {
+    for (owner, wire) in [
+        (RecordedSubagentOwner::Task, serde_json::json!({"kind": "task"})),
+        (RecordedSubagentOwner::Workflow { run_id: "workflow-persist-run-42".into() },
+            serde_json::json!({"kind": "workflow", "run_id": "workflow-persist-run-42"})),
+    ] {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = parent.path().join("subagents/child");
+        let meta = SubagentMeta {
+            subagent_id: "child".into(),
+            recorded_owner: Some(owner.clone()),
+            ..base_meta()
+        };
+        assert!(write_subagent_meta(&dir, &meta));
+        let local: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("meta.json")).unwrap()).unwrap();
+        assert_eq!(local["recorded_owner"], wire);
+        assert!(local.get("recordedOwner").is_none());
+        let mut reloaded = super::super::metadata_store::read_owned(parent.path(), "child", "parent").unwrap();
+        assert_eq!(reloaded.recorded_owner, Some(owner.clone()));
+        for status in [SubagentMetaStatus::Running, SubagentMetaStatus::Completed] {
+            reloaded.status = status;
+            let canonical = SubagentSessionMetadata::from_meta(
+                &reloaded, None, None, None, None, None, None, None, None, 0,
+            );
+            assert_eq!(canonical.recorded_owner, Some(owner.clone()));
+            assert_eq!(canonical.schema_version, 1);
+            let value = serde_json::to_value(&canonical).unwrap();
+            assert_eq!(value["recordedOwner"], wire);
+            assert!(value.get("recorded_owner").is_none());
+            let decoded: SubagentSessionMetadata = serde_json::from_value(value).unwrap();
+            assert_eq!(decoded.recorded_owner, Some(owner.clone()));
+        }
+    }
+}
+#[test]
+fn recorded_owner_legacy_null_and_unknown_fields_remain_compatible() {
+    let parent = tempfile::tempdir().unwrap();
+    let dir = parent.path().join("subagents/child");
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = SubagentMeta { subagent_id: "child".into(), ..base_meta() };
+    let canonical = SubagentSessionMetadata::from_meta(
+        &meta, None, None, None, None, None, None, None, None, 0,
+    );
+    assert!(canonical.recorded_owner.is_none());
+    let local = serde_json::to_value(&meta).unwrap();
+    let remote = serde_json::to_value(&canonical).unwrap();
+    assert!(local.get("recorded_owner").is_none());
+    assert!(remote.get("recordedOwner").is_none());
+    for explicit_null in [false, true] {
+        let mut local = local.clone();
+        let mut remote = remote.clone();
+        local["future_field"] = serde_json::json!({"extra": 1});
+        remote["futureField"] = serde_json::json!({"extra": 1});
+        if explicit_null {
+            local["recorded_owner"] = serde_json::Value::Null;
+            remote["recordedOwner"] = serde_json::Value::Null;
+        }
+        std::fs::write(dir.join("meta.json"), serde_json::to_vec(&local).unwrap()).unwrap();
+        let decoded = super::super::metadata_store::read_owned(parent.path(), "child", "parent").unwrap();
+        assert!(decoded.recorded_owner.is_none());
+        assert!(serde_json::to_value(&decoded).unwrap().get("recorded_owner").is_none());
+        let projected = SubagentSessionMetadata::from_meta(
+            &decoded, None, None, None, None, None, None, None, None, 0,
+        );
+        assert!(projected.recorded_owner.is_none());
+        assert!(serde_json::to_value(projected).unwrap().get("recordedOwner").is_none());
+        let decoded: SubagentSessionMetadata = serde_json::from_value(remote).unwrap();
+        assert!(decoded.recorded_owner.is_none());
+        assert!(serde_json::to_value(decoded).unwrap().get("recordedOwner").is_none());
+    }
+    for wire in [
+        serde_json::json!({"kind": "task", "future_field": 1}),
+        serde_json::json!({"kind": "workflow", "run_id": "workflow-extra-run-42", "future_field": 1}),
+    ] {
+        let mut local = local.clone();
+        let mut remote = remote.clone();
+        local["recorded_owner"] = wire.clone();
+        remote["recordedOwner"] = wire;
+        assert!(serde_json::from_value::<SubagentMeta>(local).unwrap().recorded_owner.is_some());
+        assert!(serde_json::from_value::<SubagentSessionMetadata>(remote).unwrap().recorded_owner.is_some());
+    }
+}
+#[test]
+fn recorded_owner_invalid_evidence_fails_through_the_metadata_decode_owner() {
+    let parent = tempfile::tempdir().unwrap();
+    let dir = parent.path().join("subagents/child");
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = SubagentMeta { subagent_id: "child".into(), ..base_meta() };
+    let canonical = SubagentSessionMetadata::from_meta(
+        &meta, None, None, None, None, None, None, None, None, 0,
+    );
+    for wire in [
+        serde_json::json!({"kind": "unknown_owner"}),
+        serde_json::json!({"run_id": "workflow-invalid-run-42"}),
+        serde_json::json!({"kind": "workflow"}),
+    ] {
+        let mut local = serde_json::to_value(&meta).unwrap();
+        local["recorded_owner"] = wire.clone();
+        std::fs::write(dir.join("meta.json"), serde_json::to_vec(&local).unwrap()).unwrap();
+        let error = super::super::metadata_store::read_owned(parent.path(), "child", "parent").unwrap_err();
+        let decode = error.get_ref().unwrap().downcast_ref::<serde_json::Error>().expect("metadata Serde error");
+        assert!(decode.is_data());
+        let mut remote = serde_json::to_value(&canonical).unwrap();
+        remote["recordedOwner"] = wire;
+        assert!(serde_json::from_value::<SubagentSessionMetadata>(remote).unwrap_err().is_data());
+    }
+}
 /// Canonical running-status `SubagentMeta`; tests override only the fields under test via `..base_meta()`.
 fn base_meta() -> SubagentMeta {
     SubagentMeta {
         subagent_id: "sa".into(),
+        recorded_owner: None,
         attempt_id: None,
         parent_session_id: "parent".into(),
         child_session_id: "child".into(),
@@ -508,6 +617,19 @@ fn update_subagent_meta_snapshot_ref_reports_failure_when_meta_missing() {
 /// Snapshotref writes retain initial metadata until the durable producer commit.
 #[tokio::test]
 async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
+    assert_snapshot_completion_preserves_recorded_owner(None).await;
+}
+#[tokio::test]
+async fn snapshot_completion_preserves_recorded_task_owner() {
+    assert_snapshot_completion_preserves_recorded_owner(Some(RecordedSubagentOwner::Task)).await;
+}
+#[tokio::test]
+async fn snapshot_completion_preserves_recorded_workflow_owner() {
+    assert_snapshot_completion_preserves_recorded_owner(Some(RecordedSubagentOwner::Workflow {
+        run_id: "workflow-snapshot-run-42".into(),
+    })).await;
+}
+async fn assert_snapshot_completion_preserves_recorded_owner(recorded_owner: Option<RecordedSubagentOwner>) {
     let mut ctx = ctx_with_toggle(HashMap::new());
     let fixture = DurableCompletionFixture::new(&mut ctx).await;
     let mut request = auto_wake_test_request("sa-promote");
@@ -519,6 +641,7 @@ async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
         parent_session_id: ctx.parent_session_id.clone(),
         child_session_id: request.id.clone(),
         worktree_path: Some("/tmp/grok-wt/subagent-x".into()),
+        recorded_owner: recorded_owner.clone(),
         ..base_meta()
     };
     let completion_data = completion_data_with_initial_meta(&ctx, initial.clone(), &meta_dir);
@@ -570,6 +693,12 @@ async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
     prepare_completion_admission(&completion).await.expect("actual producer commit");
     let producer = completion.completion_data.prepared_producer().expect("actual producer acknowledgement");
     assert_eq!(producer.event.state, SubagentState::Completed);
+    let reloaded: crate::session::completion_delivery::SubagentCompletionEvent =
+        serde_json::from_value(serde_json::to_value(producer.event.as_ref()).unwrap()).unwrap();
+    let crate::session::completion_delivery::CompletionArtifacts::Metadata { metadata } = &reloaded.artifacts else {
+        panic!("producer must retain metadata artifacts");
+    };
+    assert_eq!(metadata.recorded_owner, recorded_owner);
     let committed_data = std::fs::read(meta_dir.join("meta.json")).unwrap();
     let committed: SubagentMeta = serde_json::from_slice(&committed_data).unwrap();
     let expected_terminal = SubagentMeta {
@@ -594,6 +723,7 @@ async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
     assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), committed_data);
     let reread: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
     assert_eq!(SubagentMetaStatus::Completed, reread.status);
+    assert_eq!(reread.recorded_owner, recorded_owner);
     assert_eq!(Some("refs/grok/subagents/x"), reread.snapshot_ref.as_deref());
     assert_eq!(reread.worktree_path, initial.worktree_path);
     assert!(reread.completed_at.is_some());

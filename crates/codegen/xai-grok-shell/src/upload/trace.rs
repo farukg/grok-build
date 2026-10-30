@@ -2746,6 +2746,7 @@ pub(crate) mod tests {
         });
         let metadata = crate::agent::subagent::SubagentSessionMetadata {
             schema_version: 1,
+            recorded_owner: None,
             session_id: "child-1".into(),
             session_kind: "subagent".into(),
             subagent_id: "sa-1".into(),

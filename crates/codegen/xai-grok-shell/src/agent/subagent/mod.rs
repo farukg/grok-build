@@ -2338,12 +2338,21 @@ impl SubagentMetaStatus {
         }
     }
 }
+/// Recorded spawn provenance, not execution or resume authority.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RecordedSubagentOwner {
+    Task,
+    Workflow { run_id: String },
+}
 /// Metadata stored as `meta.json` in the child session directory.
 /// Links the child session back to its parent.
 /// For the GCS-persisted artifact (`subagent.json`), see [`SubagentSessionMetadata`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SubagentMeta {
     pub subagent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_owner: Option<RecordedSubagentOwner>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
     pub parent_session_id: String,
@@ -2395,6 +2404,8 @@ pub struct SubagentMeta {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SubagentSessionMetadata {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_owner: Option<RecordedSubagentOwner>,
     pub session_id: String,
     pub session_kind: String,
     pub subagent_id: String,
@@ -2468,6 +2479,7 @@ impl SubagentSessionMetadata {
         };
         Self {
             schema_version: Self::SCHEMA_VERSION,
+            recorded_owner: meta.recorded_owner.clone(),
             session_id: meta.child_session_id.clone(),
             session_kind: session_kind.to_string(),
             subagent_id: meta.subagent_id.clone(),

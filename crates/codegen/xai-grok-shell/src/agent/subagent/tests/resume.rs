@@ -25,6 +25,7 @@ fn subagents_dir(parent: &str) -> PathBuf {
 fn child_meta(id: &str, parent: &str, status: SubagentMetaStatus) -> SubagentMeta {
     SubagentMeta {
         subagent_id: id.to_owned(),
+        recorded_owner: None,
         attempt_id: None,
         parent_session_id: parent.to_owned(),
         child_session_id: id.to_owned(),
