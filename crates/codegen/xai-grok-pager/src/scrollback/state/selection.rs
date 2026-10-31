@@ -107,7 +107,7 @@ impl ScrollbackState {
 
     pub fn set_selected(&mut self, index: Option<usize>) {
         self.pending_inline_anchor = None;
-        self.selected = index.filter(|&i| i < self.entries.len());
+        self.selected = index.filter(|&i| i < self.entries.len() && !self.is_entry_hidden(i));
         if let Some(sel) = self.selected {
             self.current_turn = self.turn_containing(sel);
         }
@@ -304,6 +304,7 @@ impl ScrollbackState {
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
             && match entry.display_mode {
+                DisplayMode::Hidden => false,
                 DisplayMode::Collapsed => entry.can_expand(),
                 DisplayMode::Truncated | DisplayMode::Expanded => entry.can_collapse(),
             }
@@ -548,7 +549,7 @@ impl ScrollbackState {
         let mut changed_ids = Vec::new();
         for (id, entry) in &mut self.entries {
             entry.display_mode_pinned = false;
-            if entry.is_foldable() {
+            if entry.display_mode != DisplayMode::Hidden && entry.is_foldable() {
                 entry.display_mode = DisplayMode::Collapsed;
                 entry.invalidate_cache();
                 changed_ids.push(*id);
@@ -568,7 +569,7 @@ impl ScrollbackState {
         let mut changed_ids = Vec::new();
         for (id, entry) in &mut self.entries {
             entry.display_mode_pinned = false;
-            if entry.is_foldable() {
+            if entry.display_mode != DisplayMode::Hidden && entry.is_foldable() {
                 entry.display_mode = DisplayMode::Expanded;
                 entry.invalidate_cache();
                 changed_ids.push(*id);
@@ -618,7 +619,8 @@ impl ScrollbackState {
         for (id, entry) in &mut self.entries {
             // Only expand/collapse thinking blocks; tool calls stay collapsed as one-liners
             // Group truncation is handled separately below (all hidden entries become visible)
-            if matches!(entry.block, RenderBlock::Thinking(_)) && entry.block.is_foldable() {
+            if entry.display_mode != DisplayMode::Hidden
+                && matches!(entry.block, RenderBlock::Thinking(_)) && entry.block.is_foldable() {
                 entry.display_mode = target_mode;
                 entry.display_mode_pinned = false;
                 entry.invalidate_cache();
@@ -658,6 +660,7 @@ impl ScrollbackState {
                 || !entry.block.is_foldable()
                 || entry.is_running
                 || (respect_manual_folds && entry.display_mode_pinned)
+                || entry.display_mode == DisplayMode::Hidden
                 || entry.display_mode == target_mode
             {
                 continue;
@@ -843,6 +846,7 @@ impl ScrollbackState {
 
 fn display_rank(mode: DisplayMode) -> u8 {
     match mode {
+        DisplayMode::Hidden => 0,
         DisplayMode::Collapsed => 0,
         DisplayMode::Truncated => 1,
         DisplayMode::Expanded => 2,

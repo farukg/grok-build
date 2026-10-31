@@ -4,6 +4,8 @@ use crate::app::agent_test_fixtures::running_bg_task;
 use crate::app::agent_view::{AgentView, AppRenderParams, BannerSlotParams, ChildLink};
 use crate::app::session_views::test_support::link_child;
 use crate::scrollback::blocks::{BgTaskBlock, SubagentBlock};
+use crate::scrollback::block::MessageKind;
+use crate::scrollback::types::DisplayForm;
 use crate::scrollback::render::ScratchBuffer;
 use ratatui::{buffer::Buffer, layout::Rect};
 use std::path::PathBuf;
@@ -182,6 +184,56 @@ fn cold_child_replay_is_passive_and_cached_without_queue_or_session_activation()
     assert!(matches!(child.session.state, crate::app::agent::AgentState::Idle));
     assert!(child.session.pending_prompts.is_empty());
     assert!(child.session.current_prompt_id.is_none());
+    crate::app::subagent::set_replay_grok_home_for_tests(None);
+}
+
+#[test]
+fn rendered_collapsed_child_hidden_does_not_demand_replay_or_projection() {
+    let home = tempfile::tempdir().unwrap();
+    let sid = "inline-child-hidden";
+    let dir = home.path().join("sessions").join(urlencoding::encode("/tmp").as_ref()).join(sid);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("summary.json"), "{}").unwrap();
+    let record = serde_json::json!({"method":"session/update", "params": {
+        "sessionId": sid, "update": {"sessionUpdate":"user_message_chunk",
+            "content":{"type":"text", "text":"restored hidden child transcript"}}}});
+    std::fs::write(dir.join("updates.jsonl"), format!("{record}\n")).unwrap();
+    crate::app::subagent::set_replay_grok_home_for_tests(Some(home.path().to_owned()));
+    let (mut views, id) = child_views(sid, view(sid));
+    {
+        let root = views.get_mut(&AgentId(0)).unwrap();
+        root.scrollback.insert_block_before(id, RenderBlock::user_prompt("before child"));
+        root.scrollback.push_block(RenderBlock::user_prompt("visible neighbour"));
+        root.scrollback.choose_kind_default(MessageKind::Subagent, DisplayForm::Collapsed);
+    }
+    let reads = crate::app::subagent::test_support::transcript_reads();
+    settle(&mut views, AgentId(0), 80);
+    assert!(views.get(&AgentId(0)).unwrap().scrollback.get_by_id(id).unwrap()
+        .inline_request_width().is_some(), "collapsed child was actually rendered");
+    assert_eq!(crate::app::subagent::test_support::transcript_reads(), reads);
+    views.get_mut(&AgentId(0)).unwrap().scrollback
+        .choose_kind_default(MessageKind::Subagent, DisplayForm::Hidden);
+    // A demand queued by the previous frame must also be discarded.
+    views.get(&AgentId(0)).unwrap().scrollback.request_inline_output(id, 80, 0..60);
+    for width in [80, 52, 110] {
+        let buffer = settle(&mut views, AgentId(0), width);
+        assert!(!painted(&buffer).contains("delegation is not the transcript"));
+        assert!(!painted(&buffer).contains("restored hidden child transcript"));
+        let root = views.get(&AgentId(0)).unwrap();
+        assert!(root.scrollback.inline_render_requests().iter().all(|(entry, _, _)| *entry != id));
+        let child = views.get(&AgentId(1)).unwrap();
+        assert!(matches!(child.inline_sources.replay, InlineReplay::Unrequested));
+        assert!(child.inline_sources.transcript.borrow().is_none());
+        assert!(root.inline_sources.pending_children.borrow().is_empty());
+        assert_eq!(crate::app::subagent::test_support::transcript_reads(), reads);
+    }
+    views.get_mut(&AgentId(0)).unwrap().scrollback
+        .choose_kind_default(MessageKind::Subagent, DisplayForm::Expanded);
+    let buffer = settle(&mut views, AgentId(0), 80);
+    assert!(painted(&buffer).contains("restored hidden child transcript"));
+    assert!(source_text(&mut views, id).unwrap().contains("restored hidden child transcript"));
+    assert_eq!(crate::app::subagent::test_support::transcript_reads(), reads + 1);
+    assert!(views.get(&AgentId(1)).unwrap().inline_sources.transcript.borrow().is_some());
     crate::app::subagent::set_replay_grok_home_for_tests(None);
 }
 

@@ -125,7 +125,7 @@ impl MessageKind {
             MessageKind::MemoryCapture => "Memory captures",
             MessageKind::Injected => "Legacy injected defaults",
             MessageKind::InjectedOther => "Other / unknown injection",
-            MessageKind::InjectedInstructions => "Injected instructions",
+            MessageKind::InjectedInstructions => "Instructions / capabilities",
             MessageKind::InjectedContinuation => "Continuation / recovery",
             MessageKind::InjectedNotification => "Runtime notifications",
             MessageKind::InjectedMemory => "Memory reminders",
@@ -295,6 +295,7 @@ impl MessageKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter, strum::EnumCount)]
 pub(crate) enum MessageGroup {
+    Instructions,
     Conversation,
     Files,
     Research,
@@ -306,6 +307,7 @@ pub(crate) enum MessageGroup {
 impl MessageGroup {
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::Instructions => "Instructions / capabilities",
             Self::Conversation => "Conversation",
             Self::Files => "Files / commands",
             Self::Research => "Research / integrations",
@@ -345,9 +347,9 @@ impl MessageKind {
             Self::System | Self::SessionEvent | Self::ContextInfo | Self::MemoryCapture => {
                 Some(MessageGroup::Session)
             }
+            Self::InjectedInstructions => Some(MessageGroup::Instructions),
             Self::Injected
             | Self::InjectedOther
-            | Self::InjectedInstructions
             | Self::InjectedContinuation
             | Self::InjectedNotification
             | Self::InjectedMemory
@@ -466,6 +468,7 @@ pub trait BlockContent {
     fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {
         let _ = is_running; // Default ignores running state
         match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
             DisplayMode::Collapsed => DisplayMode::Expanded,
             DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
         }
@@ -796,6 +799,9 @@ impl RenderBlock {
         ctx: &BlockContext,
         completion: ToolCompletion,
     ) -> RenderedBlockOutput {
+        if ctx.mode == DisplayMode::Hidden {
+            return RenderedBlockOutput::from(BlockOutput { lines: Vec::new() });
+        }
         let symbol = self.message_symbol_with_completion(ctx, completion);
         let prefix = symbol
             .as_ref()

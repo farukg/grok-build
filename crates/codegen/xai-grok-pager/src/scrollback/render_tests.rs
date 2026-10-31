@@ -3975,3 +3975,82 @@ fn dim_from_entry_stays_visible_on_terminal_theme() {
         luma(active.fg)
     );
 }
+
+
+#[test]
+fn hidden_policy_removes_rows_gaps_hits_selection_and_copy_then_restores_source() {
+    use crate::scrollback::{ScrollbackState, blocks::InjectedBlock};
+    use crate::scrollback::block::MessageKind;
+    use crate::scrollback::types::DisplayForm;
+    let _theme = crate::theme::cache::pin_theme();
+    let mut state = ScrollbackState::new();
+    state.push_block(RenderBlock::agent_message("before"));
+    let id = state.push_block(RenderBlock::Injected(InjectedBlock::from_reason(
+        "primary", "private captured body\nsecond line",
+    )));
+    state.push_block(RenderBlock::agent_message("after"));
+    let source = state.get_by_id(id).unwrap().block.searchable_text();
+    let history = crate::scrollback::export::render_blocks_to_markdown(
+        (0..state.len()).map(|i| &state.get(i).unwrap().block),
+    );
+    state.prepare_layout(80, 20);
+    state.set_selected(Some(1));
+    state.choose_kind_default(MessageKind::InjectedInstructions, DisplayForm::Hidden);
+    state.prepare_layout(80, 20);
+    let layouts = state.get_cached_entry_layouts().unwrap();
+    assert_eq!(layouts[1].height, 0);
+    assert_eq!(layouts[1].gap_after, 0);
+    assert_eq!(layouts[0].gap_after, 1);
+    assert_eq!(state.get_cached_virtual_y().unwrap()[2], layouts[0].height + 1);
+    assert_ne!(state.selected(), Some(1));
+    let entry = state.get_by_id(id).unwrap();
+    let ctx = entry.context(80, state.appearance(), None);
+    assert!(entry.effective_output(80, state.appearance(), true, None).output().is_empty());
+    assert_eq!(entry.copy_visible_text_in_state(&ctx), None);
+    let (buf, result) = render_state(&state, Rect::new(0, 0, 80, 20), true);
+    assert!(!result.selection_model.visible_blocks.iter().any(|block| block.entry_idx == 1));
+    assert!(!result.selection_model.ranges.iter().any(|range| range.entry_idx == 1));
+    assert!(result.inline_media.is_empty());
+    assert!(result.diagram_affordances.is_empty());
+    let painted = (0..20).map(|y| buffer_row_text(&buf, y)).collect::<String>();
+    assert!(!painted.contains("captured"));
+    assert_eq!(state.get_by_id(id).unwrap().block.searchable_text(), source);
+    assert_eq!(crate::scrollback::export::render_blocks_to_markdown(
+        (0..state.len()).map(|i| &state.get(i).unwrap().block)), history);
+    state.choose_kind_default(MessageKind::InjectedInstructions, DisplayForm::Expanded);
+    state.prepare_layout(80, 20);
+    assert!(state.get_cached_entry_height(1).unwrap() > 0);
+    let entry = state.get_by_id(id).unwrap();
+    let ctx = entry.context(80, state.appearance(), None);
+    assert!(entry.copy_visible_text_in_state(&ctx).unwrap().contains("private captured body"));
+    assert_eq!(entry.block.searchable_text(), source);
+}
+
+#[test]
+fn hidden_only_transcript_has_no_geometry_even_when_appending() {
+    use crate::scrollback::ScrollbackState;
+    use crate::scrollback::block::MessageKind;
+    use crate::scrollback::types::DisplayForm;
+    let _theme = crate::theme::cache::pin_theme();
+    let mut state = ScrollbackState::new();
+    state.choose_kind_default(MessageKind::UserPrompt, DisplayForm::Hidden);
+    state.push_block(RenderBlock::user_prompt("captured prompt"));
+    state.prepare_layout(40, 10);
+    state.push_block(RenderBlock::user_prompt("another prompt"));
+    state.prepare_layout(40, 10);
+    assert!(state.get_cached_entry_layouts().unwrap().iter().all(|layout| layout.height == 0 && layout.gap_after == 0));
+    assert!(state.get_cached_prompt_descriptors().unwrap().is_empty());
+    state.set_selected(Some(0));
+    state.choose_kind_default(MessageKind::UserPrompt, DisplayForm::Hidden);
+    assert_eq!(state.selected(), None);
+    let (buf, result) = render_state(&state, Rect::new(0, 0, 40, 10), true);
+    assert_eq!(result.total_height, 0);
+    assert!(result.selected_area.is_none());
+    assert!(result.selection_model.visible_blocks.is_empty());
+    assert!(result.selection_model.ranges.is_empty());
+    assert!((0..10).all(|y| buffer_row_text(&buf, y).trim().is_empty()));
+    state.choose_kind_default(MessageKind::UserPrompt, DisplayForm::Expanded);
+    state.prepare_layout(40, 10);
+    assert_eq!(state.len(), 2);
+    assert_eq!(state.get_cached_prompt_descriptors().unwrap().len(), 2);
+}

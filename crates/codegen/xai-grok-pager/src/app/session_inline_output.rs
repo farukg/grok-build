@@ -15,9 +15,12 @@ use crate::scrollback::entry::inline_output::{
 };
 use crate::scrollback::entry::{EntryId, ScrollbackEntry};
 use crate::scrollback::types::{
-    BlockOutput, DisplayMode, RenderedBlockOutput, SelectionBoundaries, SelectionBoundary,
+    BlockOutput, RenderedBlockOutput, SelectionBoundaries, SelectionBoundary,
     SelectionBoundaryEntry, selectable_cols,
 };
+
+#[cfg(test)]
+use crate::scrollback::types::DisplayMode;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InlineCopyOutcome {
@@ -313,7 +316,7 @@ impl SessionViews {
                     return None;
                 }
                 match &entry.block {
-                    RenderBlock::Subagent(row) if entry.display_mode != DisplayMode::Collapsed => {
+                    RenderBlock::Subagent(row) if entry.inline_body_expanded() => {
                         Some(row.child_session_id.clone())
                     }
                     RenderBlock::Subagent(_)
@@ -427,6 +430,7 @@ impl SessionViews {
         dirty: &mut Vec<(AgentId, EntryId)>,
     ) {
         let Some(view) = self.get(&owner) else { return };
+        if entry.is_hidden(crate::appearance::cache::load_show_thinking_blocks()) { return; }
         entry.bind_selection_source(
             crate::scrollback::selection_identity::SourceBinding::Session {
                 agent: owner.0,
@@ -440,7 +444,7 @@ impl SessionViews {
         {
             return;
         }
-        let expanded = entry.display_mode != DisplayMode::Collapsed;
+        let expanded = entry.inline_body_expanded();
         let body = match &entry.block {
             RenderBlock::BgTask(task) => self.project_task(
                 owner,
@@ -750,7 +754,7 @@ impl SessionViews {
                 );
                 indices.insert(entry.id, parts.len());
                 ids.push(entry.id);
-                let estimate = if entry.is_hidden_thinking(show_thinking) {
+                let estimate = if entry.is_hidden(show_thinking) {
                     0
                 } else {
                     entry.cached_estimate_lines(width).unwrap_or(1)
@@ -825,7 +829,7 @@ impl SessionViews {
                         epoch: view.session_binding_epoch,
                     },
                 );
-                if entry.is_hidden_thinking(show_thinking) {
+                if entry.is_hidden(show_thinking) {
                     continue;
                 }
                 let theme = crate::theme::Theme::current();

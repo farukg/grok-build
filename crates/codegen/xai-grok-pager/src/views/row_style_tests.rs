@@ -184,6 +184,7 @@ fn unavailable_row_is_dimmer_than_an_enabled_switch() {
 
 #[test]
 fn display_form_maps_to_its_own_sidebar_class() {
+    assert_eq!(SidebarRowClass::from(DisplayForm::Hidden), SidebarRowClass::FormHidden);
     assert_eq!(
         SidebarRowClass::from(DisplayForm::Expanded),
         SidebarRowClass::FormExpanded

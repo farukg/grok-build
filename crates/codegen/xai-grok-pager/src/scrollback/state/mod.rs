@@ -1445,7 +1445,7 @@ impl ScrollbackState {
         let Some(entry) = self.get_by_id_mut(id) else {
             return;
         };
-        if entry.display_mode_pinned {
+        if entry.display_mode_pinned || entry.display_mode == DisplayMode::Hidden {
             return;
         }
         let RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) = &entry.block else {
@@ -1475,7 +1475,7 @@ impl ScrollbackState {
         let Some(entry) = self.get_by_id_mut(id) else {
             return;
         };
-        if entry.display_mode_pinned {
+        if entry.display_mode_pinned || entry.display_mode == DisplayMode::Hidden {
             return;
         }
         let RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) = &entry.block else {

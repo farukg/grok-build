@@ -28,6 +28,7 @@ pub(super) enum Goal {
 pub(super) enum SidebarCommand {
     Tree(TreeKey),
     Activate,
+    CycleBackward,
     Bulk {
         spread: Spread,
         goal: Goal,
@@ -65,6 +66,7 @@ pub(super) fn command_for(key: &KeyEvent, page: usize) -> Option<SidebarCommand>
         KeyCode::PageDown => Some(SidebarCommand::Tree(TreeKey::PageDown(page))),
         KeyCode::Enter if key.modifiers.is_empty() => Some(SidebarCommand::Inspect),
         KeyCode::Enter | KeyCode::Char(' ') => Some(activation(key.modifiers)),
+        KeyCode::Backspace if plain => Some(SidebarCommand::CycleBackward),
         KeyCode::Esc => Some(SidebarCommand::Close),
         KeyCode::Tab => Some(SidebarCommand::FocusChat),
         KeyCode::Char('k') if plain => Some(SidebarCommand::Tree(TreeKey::Up)),
@@ -109,7 +111,7 @@ pub(super) fn hint_for(target: Option<CursorTarget>) -> &'static str {
         Some(CursorTarget::Row(RowTarget::DockPlacement)) => "Space Off/Top/Bottom · ←/→ fold",
         Some(CursorTarget::Row(RowTarget::Todo)) => "Ctrl+T opens the todo pane",
         Some(CursorTarget::Row(RowTarget::Context(_))) => "Space ON/OFF · Enter details · c scope · +/- all",
-        Some(CursorTarget::Row(RowTarget::Display(_))) => "Space flips · +/- all · * everything",
+        Some(CursorTarget::Row(RowTarget::Display(_))) => "Space 1 line/full/hide · Backspace reverse · +/- all",
         None => "Esc closes",
     }
 }

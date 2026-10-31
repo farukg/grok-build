@@ -66,11 +66,31 @@ pub enum DisplayForm {
     Collapsed,
     #[default]
     Expanded,
+    Hidden,
+}
+
+impl DisplayForm {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Collapsed => Self::Expanded,
+            Self::Expanded => Self::Hidden,
+            Self::Hidden => Self::Collapsed,
+        }
+    }
+
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Collapsed => Self::Hidden,
+            Self::Expanded => Self::Collapsed,
+            Self::Hidden => Self::Expanded,
+        }
+    }
 }
 
 /// Current renderer state, including transient truncation while content is live.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum DisplayMode {
+    Hidden,
     Collapsed,
     Truncated,
     #[default]
@@ -81,6 +101,7 @@ impl From<DisplayForm> for DisplayMode {
     fn from(form: DisplayForm) -> Self {
         match form {
             DisplayForm::Collapsed => Self::Collapsed,
+            DisplayForm::Hidden => Self::Hidden,
             DisplayForm::Expanded => Self::Expanded,
         }
     }
@@ -718,6 +739,48 @@ pub fn visual_selectable_cols(line: &BlockLine) -> Option<Range<u16>> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn display_forms_preserve_legacy_serde_and_default() {
+        assert_eq!(DisplayForm::default(), DisplayForm::Expanded);
+        for (wire, form) in [("\"Collapsed\"", DisplayForm::Collapsed),
+            ("\"Expanded\"", DisplayForm::Expanded), ("\"Hidden\"", DisplayForm::Hidden)] {
+            assert_eq!(serde_json::from_str::<DisplayForm>(wire).unwrap(), form);
+            assert_eq!(serde_json::to_string(&form).unwrap(), wire);
+        }
+        #[derive(serde::Deserialize)]
+        struct Legacy { #[serde(default)] form: DisplayForm }
+        assert_eq!(serde_json::from_str::<Legacy>("{}").unwrap().form, DisplayForm::Expanded);
+    }
+
+    #[test]
+    fn every_kind_preserves_its_default_and_uses_the_same_three_form_cycle() {
+        use crate::scrollback::block::MessageKind;
+        for &kind in MessageKind::settings_kinds() {
+            let expected = match kind {
+                MessageKind::AgentMessage | MessageKind::System
+                | MessageKind::SessionEvent | MessageKind::ContextInfo | MessageKind::MemoryCapture => DisplayForm::Expanded,
+                MessageKind::UserPrompt | MessageKind::Execute | MessageKind::Read | MessageKind::Edit | MessageKind::ListDir
+                | MessageKind::Search | MessageKind::WebFetch | MessageKind::WebSearch
+                | MessageKind::IntegrationSearch | MessageKind::UseTool | MessageKind::MemorySearch
+                | MessageKind::SentMessage | MessageKind::Skill | MessageKind::OtherTool
+                | MessageKind::Thinking | MessageKind::BgTask | MessageKind::Subagent
+                | MessageKind::Workflow | MessageKind::Btw | MessageKind::Injected
+                | MessageKind::InjectedOther | MessageKind::InjectedInstructions
+                | MessageKind::InjectedContinuation | MessageKind::InjectedNotification
+                | MessageKind::InjectedMemory | MessageKind::InjectedSummary
+                | MessageKind::InjectedEnvironment | MessageKind::InjectedConversation => DisplayForm::Collapsed,
+                MessageKind::Stub => DisplayForm::Expanded,
+            };
+            assert_eq!(kind.starting_form(), expected, "{kind:?}");
+            let mut form = DisplayForm::Collapsed;
+            for expected in [DisplayForm::Expanded, DisplayForm::Hidden, DisplayForm::Collapsed] {
+                form = form.next();
+                assert_eq!(form, expected, "{kind:?}");
+                assert_eq!(form.previous().next(), form);
+            }
+        }
+    }
 
     #[test]
     fn test_block_output_plain() {

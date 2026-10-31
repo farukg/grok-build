@@ -170,7 +170,8 @@ fn scan_verb_runs(
 /// joins, even after a stop-hook batch collapses it. Otherwise expand/collapse and "N more" would walk across the
 /// turn and key off the previous header. `collapsed_only` is Mode B (collapsed entries only).
 pub(super) fn can_join_dense_run(entry: &ScrollbackEntry, collapsed_only: bool) -> bool {
-    entry.block.is_groupable()
+    entry.display_mode != DisplayMode::Hidden
+        && entry.block.is_groupable()
         && !entry.block.is_turn_terminal_marker()
         && (!collapsed_only || entry.display_mode == DisplayMode::Collapsed)
 }
@@ -178,7 +179,7 @@ pub(super) fn can_join_dense_run(entry: &ScrollbackEntry, collapsed_only: bool) 
 /// Collapsed groupable entries may join a truncation run.
 /// Hidden thinking is excluded so tools elect their own "N more" header.
 fn participates_in_truncation(entry: &ScrollbackEntry, show_thinking: bool) -> bool {
-    can_join_dense_run(entry, /*collapsed_only=*/ true) && !entry.is_hidden_thinking(show_thinking)
+    can_join_dense_run(entry, /*collapsed_only=*/ true) && !entry.is_hidden(show_thinking)
 }
 
 /// Find consecutive runs of collapsed, groupable entries longer than `max_visible + 1`. An interspersed thought
@@ -218,7 +219,7 @@ fn scan_truncations(
             }
             if participates_in_truncation(e, show_thinking) {
                 group_len += 1;
-            } else if !e.is_hidden_thinking(show_thinking) {
+            } else if !e.is_hidden(show_thinking) {
                 break;
             }
             j += 1;
@@ -347,7 +348,7 @@ fn project_truncation(
     let mut seen = 0;
     for idx in span.range.clone() {
         let (_, e) = entries.get_index(idx).unwrap();
-        if e.is_hidden_thinking(show_thinking) {
+        if e.is_hidden(show_thinking) {
             continue;
         }
         let Some(cached) = layout_cache.get_mut(idx) else {

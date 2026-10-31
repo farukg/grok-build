@@ -943,10 +943,10 @@ impl ScrollbackState {
     /// Wrapped or tall entries thus land the match on screen instead of scrolling it past the viewport.
     pub fn reveal_entry_line(&mut self, entry_idx: usize, line_in_entry: usize) {
         self.pending_inline_anchor = None;
-        if entry_idx >= self.entries.len() {
+        let Some(entry) = self.entry(entry_idx) else { return };
+        if entry.is_hidden(crate::appearance::cache::load_show_thinking_blocks()) {
             return;
         }
-        self.set_selected(Some(entry_idx));
 
         // is_entry_hidden and group-truncation visibility are only meaningful once the layout cache exists. On a cache
         // miss build it first so the unhide below isn't silently skipped is_entry_hidden conservatively reports "visible"
@@ -994,11 +994,11 @@ impl ScrollbackState {
         if layout_changed || self.layout_cache.is_none() || !self.dirty_heights.is_empty() {
             self.rebuild_layout();
             self.dirty_heights.clear();
-        } else {
-            // rebuild_layout would have refreshed total_height; do the cheap O(visible-range) sum here. Skips only
-            // rebuild_layout's per-entry re-estimation.
-            self.compute_total_height_from_cache();
         }
+
+        self.set_selected(Some(entry_idx));
+        // Selection may switch the SingleTurn range used by centering.
+        self.compute_total_height_from_cache();
 
         // Center the entry, then nudge toward the matched line within it. The logical line maps through the entry's
         // wrapped output to its rendered-row offset, so a match below a wrapped line isn't left off screen. That offset is
@@ -1729,6 +1729,36 @@ mod tests {
             state.get_by_id(id).unwrap().display_mode_pinned,
             "search reveal's forced expand pins the entry"
         );
+    }
+
+    #[test]
+    fn reveal_preserves_explicit_hide_until_display_settings_restore_it() {
+        let mut state = ScrollbackState::new();
+        state.push_block(RenderBlock::user_prompt("first turn"));
+        let id = state.push_block(RenderBlock::execute_with_output(
+            "cargo test", "line0\nline1\nline2", None::<String>,
+        ));
+        state.push_block(RenderBlock::user_prompt("second turn"));
+        state.choose_kind_default(MessageKind::Execute, DisplayForm::Hidden);
+        state.prepare_layout(80, 20);
+        state.set_selected(Some(2));
+        state.set_view_mode(ViewMode::SingleTurn);
+
+        state.reveal_entry_line(1, 1);
+
+        assert_eq!(state.selected(), Some(2));
+        assert_eq!(state.current_turn(), Some(1));
+        assert_eq!(state.get_by_id(id).unwrap().display_mode(), DisplayMode::Hidden);
+        assert_eq!(cached_height_at(&state, 1), 0);
+
+        state.choose_kind_default(MessageKind::Execute, DisplayForm::Expanded);
+        state.reveal_entry_line(1, 1);
+
+        assert_eq!(state.selected(), Some(1));
+        assert_eq!(state.current_turn(), Some(0));
+        assert_eq!(state.visible_entry_range(), 0..2);
+        assert!(cached_height_at(&state, 1) > 0);
+        assert!(state.entry_overlaps_viewport(1));
     }
 
     #[test]

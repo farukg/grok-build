@@ -359,8 +359,10 @@ pub fn commit_active(app: &mut AppView, terminal: &mut PagerTerminal) {
         }
         // Stamp the print-once display mode before measuring/rendering.
         if let Some(e) = sb.get_mut(i) {
-            let mode = minimal_commit_display_mode(&e.block, &appearance);
-            e.set_display_mode(mode);
+            if e.display_mode() != DisplayMode::Hidden {
+                let mode = minimal_commit_display_mode(&e.block, &appearance);
+                e.set_display_mode(mode);
+            }
         }
         if let Some(e) = sb.get(i) {
             // A failed write returns `false` so the walk leaves the entry uncommitted. (retried next frame) instead of marking
@@ -385,8 +387,10 @@ pub fn commit_active(app: &mut AppView, terminal: &mut PagerTerminal) {
     // prompt upward.
     let mut j = minimal_api::commit_scan_cursor(sb);
     while let Some(e) = sb.get_mut(j) {
-        let mode = minimal_commit_display_mode(&e.block, &appearance);
-        e.set_display_mode(mode);
+        if e.display_mode() != DisplayMode::Hidden {
+            let mode = minimal_commit_display_mode(&e.block, &appearance);
+            e.set_display_mode(mode);
+        }
         j += 1;
     }
     if committed > 0 {
@@ -439,6 +443,7 @@ pub fn expand_pending(app: &mut AppView, terminal: &mut PagerTerminal) {
                 continue; // entry removed (rewind / clear) since the keypress
             };
             if let Some(e) = sb.get_mut(idx) {
+                if e.display_mode() == DisplayMode::Hidden { continue; }
                 e.set_display_mode(DisplayMode::Expanded);
             }
             if let Some(e) = sb.get(idx) {

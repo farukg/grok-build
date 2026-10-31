@@ -197,6 +197,7 @@ impl BlockContent for WebSearchToolCallBlock {
             ctx.mute_when_collapsed(ctx.appearance.scrollback.blocks.tool.muted_collapsed);
 
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed => BlockOutput {
                 lines: vec![self.header_block_line(self.header_line(
                     &theme,
@@ -302,8 +303,9 @@ impl BlockContent for WebSearchToolCallBlock {
 
     fn next_fold_mode(&self, current: DisplayMode, _is_running: bool) -> DisplayMode {
         match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
             DisplayMode::Collapsed => DisplayMode::Expanded,
-            _ => DisplayMode::Collapsed,
+            DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
         }
     }
 

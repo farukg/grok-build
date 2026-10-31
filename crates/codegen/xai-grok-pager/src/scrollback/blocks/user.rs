@@ -451,6 +451,7 @@ impl UserPromptBlock {
 impl BlockContent for UserPromptBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let max_lines = match ctx.mode {
+            DisplayMode::Hidden => return BlockOutput { lines: Vec::new() },
             DisplayMode::Expanded => None,
             DisplayMode::Collapsed => Some(COLLAPSED_RENDER_LINES),
             DisplayMode::Truncated => Some(if self.is_foldable() {
@@ -522,6 +523,7 @@ impl BlockContent for UserPromptBlock {
 
     fn next_fold_mode(&self, current: DisplayMode, _is_running: bool) -> DisplayMode {
         match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
             DisplayMode::Collapsed | DisplayMode::Truncated => DisplayMode::Expanded,
             DisplayMode::Expanded => DisplayMode::Collapsed,
         }

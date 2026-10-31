@@ -345,16 +345,16 @@ impl<'a> EntryRenderer<'a> {
         }
     }
 
-    /// Thinking entries take no rows when the Appearance toggle is off.
-    fn thinking_hidden(&self) -> bool {
+    /// Hidden entries reserve no rows or chrome.
+    fn presentation_hidden(&self) -> bool {
         self.entry
-            .is_hidden_thinking(crate::appearance::cache::load_show_thinking_blocks())
+            .is_hidden(crate::appearance::cache::load_show_thinking_blocks())
     }
 
     /// Compute height as if displayed in Truncated mode. Goes through the entry's truncated-height cache so repeated
     /// layout rebuilds don't re-run `block.output()`.
     pub fn compute_truncated_height(&self, width: u16) -> u16 {
-        if self.thinking_hidden() {
+        if self.presentation_hidden() {
             return 0;
         }
         let content_width = width
@@ -385,7 +385,7 @@ impl<'a> EntryRenderer<'a> {
     /// instead of laying it out. On-screen entries get their EXACT `desired_height`, so visible content is never
     /// estimated.
     pub fn estimate_height(&self, width: u16) -> usize {
-        if self.thinking_hidden() {
+        if self.presentation_hidden() {
             return 0;
         }
         let content_width = width
@@ -550,7 +550,7 @@ fn fill_bg_spaces(buf: &mut Buffer, rect: Rect, bg: ratatui::style::Color) {
 
 impl Renderable for EntryRenderer<'_> {
     fn desired_height(&self, width: u16) -> usize {
-        if self.thinking_hidden() {
+        if self.presentation_hidden() {
             return 0;
         }
         let content_width = width
@@ -567,7 +567,7 @@ impl Renderable for EntryRenderer<'_> {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let chrome = self.chrome_width();
-        if area.width < chrome + 1 || area.height == 0 || self.thinking_hidden() {
+        if area.width < chrome + 1 || area.height == 0 || self.presentation_hidden() {
             return;
         }
 

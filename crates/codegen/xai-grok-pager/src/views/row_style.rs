@@ -195,6 +195,7 @@ pub enum SidebarRowClass {
     FormExpanded,
     /// Message Display row showing the one-line form.
     FormOneLine,
+    FormHidden,
     /// A row the user cannot change right now.
     Unavailable,
 }
@@ -204,6 +205,7 @@ impl From<DisplayForm> for SidebarRowClass {
         match form {
             DisplayForm::Expanded => Self::FormExpanded,
             DisplayForm::Collapsed => Self::FormOneLine,
+            DisplayForm::Hidden => Self::FormHidden,
         }
     }
 }
@@ -216,6 +218,7 @@ impl SidebarRowClass {
             Self::SwitchOff => Some("\u{25CB}"),
             Self::FormExpanded => Some(Disclosure::Expanded.glyph()),
             Self::FormOneLine => Some(Disclosure::Collapsed.glyph()),
+            Self::FormHidden => Some("\u{00D7}"),
             Self::Unavailable => Some("\u{2013}"),
         }
     }
@@ -273,6 +276,11 @@ pub fn sidebar_style(class: SidebarRowClass, theme: &Theme) -> SidebarStyle {
                 value: form,
             }
         }
+        SidebarRowClass::FormHidden => SidebarStyle {
+            glyph: theme.muted(),
+            label: theme.primary(),
+            value: theme.muted().add_modifier(Modifier::ITALIC),
+        },
         SidebarRowClass::Unavailable => {
             let off = theme.muted().add_modifier(Modifier::DIM);
             SidebarStyle {

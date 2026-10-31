@@ -130,6 +130,9 @@ impl ScrollbackState {
 
     pub(crate) fn inline_render_requests(&self) -> Vec<(EntryId, u16, Range<usize>)> {
         let mut requests: Vec<_> = self.inline_output_demands.borrow_mut().drain()
+            .filter(|(id, _)| self.get_by_id(*id).is_some_and(|entry| {
+                !entry.is_hidden(crate::appearance::cache::load_show_thinking_blocks())
+            }))
             .map(|(id, (width, window))| (id, width, window)).collect();
         if self.layout_cache.is_none() || self.viewport_height == 0 { return requests; }
         let (window, _) = self.paint_window(self.visible_entry_range(), self.scroll_offset,
@@ -138,6 +141,7 @@ impl ScrollbackState {
         let cache = self.layout_cache.as_ref();
         let native = window.filter_map(|index| {
             let entry = self.entry(index)?;
+            if self.is_entry_hidden(index) { return None; }
             if requests.iter().any(|(id, _, _)| *id == entry.id) { return None; }
             let start = *cache?.virtual_y.get(index)?;
             Some((entry.id, entry.inline_request_width()?, top.saturating_sub(start)..bottom.saturating_sub(start)))
@@ -191,7 +195,9 @@ impl ScrollbackState {
     /// Returns false if the cache is missing or the index is out of bounds
     /// (conservative: treat uncached entries as visible).
     pub(super) fn is_entry_hidden(&self, idx: usize) -> bool {
-        self.layout_cache
+        self.entries.get_index(idx).is_some_and(|(_, entry)| {
+            entry.is_hidden(crate::appearance::cache::load_show_thinking_blocks())
+        }) || self.layout_cache
             .as_ref()
             .and_then(|c| c.entries.get(idx))
             .is_some_and(|e| e.height == 0)
@@ -225,6 +231,7 @@ impl ScrollbackState {
                 return;
             }
         }
+        self.selected = None;
     }
 
     /// Get all cached entry layout info (height and gap_after per entry).
@@ -1131,6 +1138,7 @@ impl ScrollbackState {
 
             if let Some((_, entry)) = self.entries.get_index(idx)
                 && entry.block.is_user_prompt()
+                && entry.display_mode != DisplayMode::Hidden
             {
                 let truncated_height = cache
                     .entry_truncated_heights
@@ -1289,15 +1297,23 @@ impl ScrollbackState {
         let is_foldable = new_entry.block.is_foldable();
         let new_display_mode = new_entry.display_mode;
 
-        // Recompute the previous entry's gap_after now that it's no longer the trailing entry
-        // The defensive check above guarantees `new_idx < self.entries.len()`, so when `new_idx > 0` the previous entry is in range
-        // We still use `if let Some(...)` to keep the access panic-free
-        if new_idx > 0
-            && let Some((_, prev_entry)) = self.entries.get_index(new_idx - 1)
-            && let Some(prev) = new_idx.checked_sub(1)
-            && let Some(slot) = cache.entries.get_mut(prev)
-        {
-            slot.gap_after = gap_after_between(prev_entry, new_entry);
+        let show_thinking = crate::appearance::cache::load_show_thinking_blocks();
+        let new_hidden = new_entry.is_hidden(show_thinking);
+        if !new_hidden {
+            let previous = (0..new_idx).rev().find(|&index| {
+                self.entries.get_index(index).is_some_and(|(_, entry)| !entry.is_hidden(show_thinking))
+            });
+            if let Some(previous) = previous
+                && let Some((_, entry)) = self.entries.get_index(previous)
+                && let Some(slot) = cache.entries.get_mut(previous)
+            {
+                slot.gap_after = gap_after_between(entry, new_entry);
+                let Some(&y) = cache.virtual_y.get(previous) else { return false; };
+                let end = y + slot.height + usize::from(slot.gap_after);
+                for y in cache.virtual_y.iter_mut().take(new_idx).skip(previous + 1) {
+                    *y = end;
+                }
+            }
         }
 
         // Compute the new entry's virtual_y (start position) using the previous entry's (now-correct) gap_after
@@ -1316,7 +1332,7 @@ impl ScrollbackState {
         // Append the new entry. It's now the trailing entry, so gap_after = 1.
         cache.entries.push(EntryLayoutInfo {
             height,
-            gap_after: 1,
+            gap_after: if new_hidden { 0 } else { 1 },
             group_header_count: 0,
             group_collapse_header: false,
             verb_group_header: false,
@@ -1326,7 +1342,7 @@ impl ScrollbackState {
         cache.measured.push(true);
         cache.virtual_y.push(new_y);
 
-        if is_prompt {
+        if is_prompt && !new_hidden {
             let min_height = truncated_height.min(MAX_TRUNCATED_HEADER_HEIGHT);
             // Expanded foldable prompts participate in push calculations but don't stick themselves; they scroll away normally
             let sticky = !(is_foldable && new_display_mode == DisplayMode::Expanded);
@@ -1424,6 +1440,7 @@ impl ScrollbackState {
 
             if let Some((_, entry)) = self.entries.get_index(idx)
                 && entry.block.is_user_prompt()
+                && entry.display_mode != DisplayMode::Hidden
             {
                 let truncated_height = cache
                     .entry_truncated_heights
@@ -1459,7 +1476,7 @@ impl ScrollbackState {
         let mut next_visible = None;
         for (index, cached) in cached_entries.iter_mut().enumerate().rev() {
             let Some((_, entry)) = entries.get_index(index) else { continue };
-            if entry.is_hidden_thinking(show_thinking) { cached.gap_after = 0; continue; }
+            if entry.is_hidden(show_thinking) { cached.gap_after = 0; continue; }
             cached.gap_after = next_visible.map_or(1, |next| gap_after_between(entry, next));
             next_visible = Some(entry);
         }

@@ -1206,6 +1206,7 @@ impl EditToolCallBlock {
         let link_target = self.path_link_target(cwd);
 
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed => {
                 // Collapsed: just header line. Path (span 1) is selectable.
                 let line = self.header_line(
@@ -1393,8 +1394,9 @@ impl BlockContent for EditToolCallBlock {
 
     fn next_fold_mode(&self, current: DisplayMode, _is_running: bool) -> DisplayMode {
         match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
             DisplayMode::Collapsed => DisplayMode::Expanded,
-            _ => DisplayMode::Collapsed,
+            DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
         }
     }
 

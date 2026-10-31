@@ -66,7 +66,12 @@ pub(super) fn context_summary(
 pub(super) fn display_summary(defaults: &DisplayDefaults) -> String {
     let kinds: Vec<_> = super::groups::all_display_leaf_kinds().collect();
     let full = kinds.iter().filter(|&&kind| defaults.shown(kind) == DisplayForm::Expanded).count();
-    format!("{full}/{} full", kinds.len())
+    let hidden = kinds.iter().filter(|&&kind| defaults.shown(kind) == DisplayForm::Hidden).count();
+    if hidden == 0 {
+        format!("{full}/{} full", kinds.len())
+    } else {
+        format!("{full}/{} full · {hidden} hide", kinds.len())
+    }
 }
 
 /// `N/M active`: how many todo items are still open, completed and cancelled included in the total.

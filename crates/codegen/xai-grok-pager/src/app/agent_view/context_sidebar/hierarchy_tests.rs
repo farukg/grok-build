@@ -166,6 +166,10 @@ fn display_title_sets_every_leaf_kind_including_folded_groups_then_cycles() {
     }
     let _ = key(&mut agent, KeyCode::Char(' '));
     for kind in super::groups::all_display_leaf_kinds() {
+        assert_eq!(agent.scrollback.display_defaults().get(kind), Some(DisplayForm::Hidden), "{kind:?}");
+    }
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    for kind in super::groups::all_display_leaf_kinds() {
         assert_eq!(agent.scrollback.display_defaults().get(kind), Some(DisplayForm::Collapsed), "{kind:?}");
     }
 }
@@ -279,4 +283,89 @@ fn group_fold_restores_in_loaded_and_reopened_views_without_changing_value_scope
     b.reload_global_panel_settings();
     let _ = key(&mut b, KeyCode::F(7));
     assert!(!text(&render(&mut b)).contains("File reads"));
+}
+
+
+#[test]
+fn every_display_leaf_cycles_forward_and_backward_without_context_traffic() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut agent = open(ContextScope::Session);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent.session.acp_tx = tx;
+    for kind in super::groups::all_display_leaf_kinds() {
+        agent.scrollback.choose_kind_default(kind, DisplayForm::Collapsed);
+        select(&mut agent, CursorTarget::Row(RowTarget::Display(kind)));
+        for expected in [DisplayForm::Expanded, DisplayForm::Hidden, DisplayForm::Collapsed] {
+            let _ = key(&mut agent, KeyCode::Char(' '));
+            assert_eq!(agent.scrollback.display_defaults().get(kind), Some(expected), "{kind:?}");
+        }
+        for expected in [DisplayForm::Hidden, DisplayForm::Expanded, DisplayForm::Collapsed] {
+            let _ = key(&mut agent, KeyCode::Backspace);
+            assert_eq!(agent.scrollback.display_defaults().get(kind), Some(expected), "{kind:?}");
+        }
+    }
+    assert!(rx.try_recv().is_err(), "display settings never send ACP request mutations");
+    assert!(agent.pending_effects.is_empty());
+    assert!(!agent.context_confirmation_pending());
+}
+
+#[test]
+fn instructions_have_one_display_owner_before_conversation() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut agent = open(ContextScope::Session);
+    let targets = super::outline::section_targets(SectionDisclosure::default(), SectionId::Display);
+    assert_eq!(targets.first(), Some(&RowTarget::Group(GroupId::Display(MessageGroup::Instructions))));
+    assert_eq!(targets.iter().filter(|&&target| target == RowTarget::Display(MessageKind::InjectedInstructions)).count(), 1);
+    assert!(!MessageGroup::Injected.kinds().any(|kind| kind == MessageKind::InjectedInstructions));
+    let display = text(&render(&mut agent));
+    let display = display.split("Message display").nth(1).unwrap();
+    assert!(display.find("Instructions / capabilities").unwrap() < display.find("Conversation").unwrap());
+    for reason in ["primary", "project_instructions", "skill_catalog", "mcp_catalog"] {
+        assert_eq!(InjectedBlock::from_reason(reason, "captured").message_kind(), MessageKind::InjectedInstructions);
+    }
+}
+
+#[test]
+fn settings_hide_and_restore_captured_instruction_data_without_request_changes() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut agent = open(ContextScope::Session);
+    let raw = "full captured instructions\nsecond line";
+    let id = agent.scrollback.push_block(RenderBlock::Injected(InjectedBlock::from_reason("primary", raw)));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent.session.acp_tx = tx;
+    select(&mut agent, CursorTarget::Row(RowTarget::Display(MessageKind::InjectedInstructions)));
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    agent.scrollback.prepare_layout(80, 20);
+    assert_eq!(agent.scrollback.get_cached_entry_height(0), Some(0));
+    assert_eq!(agent.scrollback.len(), 1);
+    let RenderBlock::Injected(block) = &agent.scrollback.get_by_id(id).unwrap().block else { panic!("captured block"); };
+    assert_eq!(block.text, raw);
+    let _ = key(&mut agent, KeyCode::Backspace);
+    agent.scrollback.prepare_layout(80, 20);
+    assert!(agent.scrollback.get_cached_entry_height(0).unwrap() > 0);
+    let RenderBlock::Injected(block) = &agent.scrollback.get_by_id(id).unwrap().block else { panic!("captured block"); };
+    assert_eq!(block.text, raw);
+    assert!(rx.try_recv().is_err());
+    assert!(agent.pending_effects.is_empty());
+}
+
+
+#[test]
+fn keyboard_hidden_choice_reopens_and_reverse_choice_is_saved() {
+    let _theme = crate::theme::cache::pin_theme();
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = open(ContextScope::Session);
+    agent.open_panel_settings_in(dir.path());
+    select(&mut agent, CursorTarget::Row(RowTarget::Display(MessageKind::InjectedInstructions)));
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    let mut reopened = open(ContextScope::Session);
+    reopened.open_panel_settings_in(dir.path());
+    assert_eq!(reopened.scrollback.display_defaults().get(MessageKind::InjectedInstructions), Some(DisplayForm::Hidden));
+    select(&mut reopened, CursorTarget::Row(RowTarget::Display(MessageKind::InjectedInstructions)));
+    let _ = key(&mut reopened, KeyCode::Backspace);
+    let mut again = open(ContextScope::Session);
+    again.open_panel_settings_in(dir.path());
+    assert_eq!(again.scrollback.display_defaults().get(MessageKind::InjectedInstructions), Some(DisplayForm::Expanded));
 }

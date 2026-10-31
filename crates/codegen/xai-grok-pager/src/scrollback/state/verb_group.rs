@@ -37,6 +37,9 @@ pub(crate) enum RunStep {
 /// never breaks a run: a finished collapsed thought without prompt chrome folds in as
 /// [`RunStep::ThoughtMember`].
 pub(crate) fn run_step(entry: &ScrollbackEntry, show_thinking: bool) -> RunStep {
+    if entry.display_mode == DisplayMode::Hidden {
+        return RunStep::Transparent;
+    }
     let is_claimable_thinking =
         entry.display_mode == DisplayMode::Collapsed && !entry.is_pending_user_input;
     if let RenderBlock::ToolCall(block) = &entry.block
@@ -225,7 +228,7 @@ pub fn truncation_header_label(
         if limit.is_some_and(|n| participants >= n) {
             break;
         }
-        if entry.is_hidden_thinking(show_thinking) {
+        if entry.is_hidden(show_thinking) {
             continue;
         }
         participants += 1;

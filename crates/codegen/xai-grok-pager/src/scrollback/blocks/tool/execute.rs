@@ -613,6 +613,7 @@ impl BlockContent for ExecuteToolCallBlock {
         };
 
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed => {
                 let muted = ctx.mute_when_collapsed(config.muted_command_collapsed);
                 let mut lines = Vec::new();

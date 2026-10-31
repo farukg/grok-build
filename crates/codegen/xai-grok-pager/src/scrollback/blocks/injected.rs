@@ -116,6 +116,7 @@ impl BlockContent for InjectedBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let theme = Theme::current();
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed | DisplayMode::Truncated => BlockOutput {
                 lines: vec![BlockLine::styled(self.header_line(
                     &theme,

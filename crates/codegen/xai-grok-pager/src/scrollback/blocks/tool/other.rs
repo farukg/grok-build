@@ -220,6 +220,7 @@ impl BlockContent for OtherToolCallBlock {
         }
 
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed => BlockOutput {
                 lines: vec![
                     self.collapsed_line(&theme, muted_collapsed, Some(ctx.content_width()))
@@ -336,13 +337,15 @@ impl BlockContent for OtherToolCallBlock {
     fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {
         if is_running {
             match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
                 DisplayMode::Truncated => DisplayMode::Expanded,
-                _ => DisplayMode::Truncated,
+                DisplayMode::Collapsed | DisplayMode::Expanded => DisplayMode::Truncated,
             }
         } else {
             match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
                 DisplayMode::Collapsed => DisplayMode::Expanded,
-                _ => DisplayMode::Collapsed,
+                DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
             }
         }
     }

@@ -649,6 +649,7 @@ impl SessionEventBlock {
         }
 
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed => {
                 let mut spans = vec![Span::styled("Recap".to_string(), header_style)];
                 let preview = summary.lines().next().unwrap_or(summary).trim();

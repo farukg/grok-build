@@ -41,7 +41,7 @@ fn every_top_and_semantic_group_fold_is_global_across_a_b_new_and_reopen() {
     let sections = [SidebarSection::Dock, SidebarSection::TodoSection, SidebarSection::Context,
         SidebarSection::MessageDisplay, SidebarSection::ContextInstructions, SidebarSection::ContextConversation,
         SidebarSection::ContextContinuation, SidebarSection::ContextNotifications, SidebarSection::ContextRetained,
-        SidebarSection::DisplayConversation, SidebarSection::DisplayFiles, SidebarSection::DisplayResearch,
+        SidebarSection::DisplayInstructions, SidebarSection::DisplayConversation, SidebarSection::DisplayFiles, SidebarSection::DisplayResearch,
         SidebarSection::DisplayWork, SidebarSection::DisplaySession, SidebarSection::DisplayInjected];
     let mut a = PanelSettingsStore::open(root.path(), Some(session("a"))).store;
     let mut b = PanelSettingsStore::open(root.path(), Some(session("b"))).store;
@@ -75,4 +75,27 @@ fn explicit_child_equal_to_global_is_not_elided_below_a_session_parent() {
     assert_eq!(store.effective().message_form(MessageKind::InjectedNotification), Some(DisplayForm::Expanded));
     let reopened = PanelSettingsStore::open(root.path(), Some(session("a"))).store;
     assert_eq!(reopened.effective().message_form(MessageKind::InjectedNotification), Some(DisplayForm::Expanded));
+}
+
+
+#[test]
+fn hidden_forms_reopen_in_existing_global_and_session_layers() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = PanelSettingsStore::open(root.path(), Some(session("a"))).store;
+    for &kind in MessageKind::settings_kinds() {
+        assert_eq!(store.effective().message_form(kind), None);
+        assert_ne!(kind.starting_form(), DisplayForm::Hidden);
+    }
+    for &kind in MessageKind::settings_kinds() {
+        store.set(Layer::Global, Setting::KindForm { kind, form: DisplayForm::Hidden }).unwrap();
+    }
+    store.set(Layer::Session, Setting::DisplayScope(Layer::Session)).unwrap();
+    store.set(Layer::Session, Setting::KindForm { kind: MessageKind::InjectedInstructions, form: DisplayForm::Expanded }).unwrap();
+    let reopened = PanelSettingsStore::open(root.path(), Some(session("a"))).store;
+    assert_eq!(reopened.effective().message_form(MessageKind::InjectedInstructions), Some(DisplayForm::Expanded));
+    let other = PanelSettingsStore::open(root.path(), Some(session("b"))).store;
+    for &kind in MessageKind::settings_kinds() {
+        assert_eq!(other.effective().message_form(kind), Some(DisplayForm::Hidden));
+    }
+    assert_eq!(reopened.effective().message_form(MessageKind::Read), Some(DisplayForm::Hidden));
 }

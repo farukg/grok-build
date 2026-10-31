@@ -26,7 +26,12 @@ impl AgentView {
                 let form = match goal {
                     Some(Goal::Set(BulkDirection::Expand)) => DisplayForm::Expanded,
                     Some(Goal::Set(BulkDirection::Collapse)) => DisplayForm::Collapsed,
-                    Some(Goal::Toggle) | None => next_display(value),
+                    Some(Goal::Toggle) => match value {
+                        Aggregate::Uniform(DisplayForm::Expanded) => DisplayForm::Collapsed,
+                        Aggregate::Uniform(DisplayForm::Collapsed | DisplayForm::Hidden)
+                        | Aggregate::Mixed | Aggregate::Unavailable => DisplayForm::Expanded,
+                    },
+                    None => next_display(value),
                 };
                 self.scrollback.choose_kind_defaults(&group.kinds().collect::<Vec<_>>(), form);
                 InputOutcome::Changed

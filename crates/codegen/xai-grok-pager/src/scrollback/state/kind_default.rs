@@ -105,6 +105,8 @@ impl ScrollbackState {
         }
         if changed {
             self.invalidate_heights();
+            self.fixup_hidden_selection();
+            self.selection_box = None;
         }
     }
 }
@@ -112,6 +114,27 @@ impl ScrollbackState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_defaults_survive_stream_completion_and_chat_fold_gestures() {
+        let mut state = ScrollbackState::new();
+        for kind in [MessageKind::Read, MessageKind::Thinking, MessageKind::AgentMessage] {
+            state.choose_kind_default(kind, DisplayForm::Hidden);
+        }
+        let ids = [
+            state.push(ScrollbackEntry::running(RenderBlock::read("file.rs", None))),
+            state.push(ScrollbackEntry::running(RenderBlock::thinking("reasoning"))),
+            state.push(ScrollbackEntry::running(RenderBlock::agent_message("answer"))),
+        ];
+        for id in ids { state.finish_running(id); }
+        state.expand_all();
+        state.collapse_all();
+        state.expand_all_thinking();
+        state.reapply_thinking_fold_policy();
+        for id in ids {
+            assert_eq!(state.get_by_id(id).unwrap().display_mode, DisplayMode::Hidden);
+        }
+    }
 
     #[test]
     fn f7_choice_applies_to_producer_selected_modes_and_future_messages() {

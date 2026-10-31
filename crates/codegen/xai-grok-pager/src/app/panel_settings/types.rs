@@ -72,6 +72,7 @@ pub enum SidebarSection {
     ContextContinuation,
     ContextNotifications,
     ContextRetained,
+    DisplayInstructions,
     DisplayConversation,
     DisplayFiles,
     DisplayResearch,

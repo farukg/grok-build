@@ -130,6 +130,7 @@ impl BlockContent for ListDirToolCallBlock {
         let terminal_bg = ctx.appearance.scrollback.blocks.list_dir.terminal_bg;
 
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed => BlockOutput {
                 lines: vec![self.header_block_line(self.collapsed_line(
                     &theme,
@@ -197,8 +198,9 @@ impl BlockContent for ListDirToolCallBlock {
 
     fn next_fold_mode(&self, current: DisplayMode, _is_running: bool) -> DisplayMode {
         match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
             DisplayMode::Collapsed => DisplayMode::Expanded,
-            _ => DisplayMode::Collapsed,
+            DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
         }
     }
 }

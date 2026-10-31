@@ -156,6 +156,26 @@ impl AgentView {
         match command {
             SidebarCommand::Tree(key) => self.navigate_sidebar(key),
             SidebarCommand::Activate => self.activate_cursor(),
+            SidebarCommand::CycleBackward => {
+                let target = match &self.context_sidebar {
+                    ContextSidebar::Open(open) => open.sidebar.cursor.and_then(|line| CursorTarget::of(line, open.disclosure)),
+                    ContextSidebar::Closed => None,
+                };
+                let kinds = match target {
+                    Some(CursorTarget::Row(RowTarget::Display(kind))) => vec![kind],
+                    Some(CursorTarget::Row(RowTarget::Group(GroupId::Display(group)))) => group.kinds().collect(),
+                    Some(CursorTarget::Title(super::SectionId::Display)) => super::groups::all_display_leaf_kinds().collect(),
+                    Some(CursorTarget::Title(super::SectionId::Dock | super::SectionId::Todo | super::SectionId::Context)
+                        | CursorTarget::Row(RowTarget::Group(GroupId::Context(_)) | RowTarget::Context(_) | RowTarget::DockPlacement | RowTarget::Todo)) | None => return InputOutcome::Unchanged,
+                };
+                let value = super::groups::Aggregate::of(kinds.iter().map(|&kind| self.scrollback.display_defaults().shown(kind)));
+                let form = match value {
+                    super::groups::Aggregate::Uniform(form) => form.previous(),
+                    super::groups::Aggregate::Mixed | super::groups::Aggregate::Unavailable => DisplayForm::Expanded,
+                };
+                self.scrollback.choose_kind_defaults(&kinds, form);
+                InputOutcome::Changed
+            }
             SidebarCommand::Bulk {
                 spread,
                 goal,
@@ -249,10 +269,7 @@ impl AgentView {
                 self.toggle_context_category(category)
             }
             Some(CursorTarget::Row(RowTarget::Display(kind))) => {
-                let form = match self.scrollback.display_defaults().shown(kind) {
-                    DisplayForm::Collapsed => DisplayForm::Expanded,
-                    DisplayForm::Expanded => DisplayForm::Collapsed,
-                };
+                let form = self.scrollback.display_defaults().shown(kind).next();
                 self.scrollback.choose_kind_default(kind, form);
                 InputOutcome::Changed
             }

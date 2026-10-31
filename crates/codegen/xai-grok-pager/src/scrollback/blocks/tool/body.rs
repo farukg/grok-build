@@ -49,6 +49,7 @@ pub(super) fn push_content_box(
     ctx: &BlockContext,
 ) {
     let max_rows = match ctx.mode {
+            DisplayMode::Hidden => return,
         DisplayMode::Truncated => 3,
         DisplayMode::Collapsed | DisplayMode::Expanded => usize::MAX,
     };

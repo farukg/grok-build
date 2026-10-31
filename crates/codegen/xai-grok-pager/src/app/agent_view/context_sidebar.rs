@@ -166,6 +166,7 @@ fn form_label(form: DisplayForm) -> &'static str {
     match form {
         DisplayForm::Collapsed => "1 line",
         DisplayForm::Expanded => "full",
+        DisplayForm::Hidden => "hide",
     }
 }
 

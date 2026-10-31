@@ -278,12 +278,10 @@ pub(super) fn apply_task_backgrounded(
                     description = exec.description.take();
                 }
             }
+            entry.display_mode_pinned = false;
             let block = crate::scrollback::blocks::BgTaskBlock::started(&command, &task_id)
                 .with_description(description.clone());
-            entry.block = RenderBlock::BgTask(block);
-            entry.display_mode = crate::scrollback::types::DisplayMode::Collapsed;
-            entry.display_mode_pinned = false;
-            entry.invalidate_cache();
+            scrollback.replace_tool_block(eid, RenderBlock::BgTask(block), None);
             scrollback.mark_height_dirty(eid);
             scrollback.finish_running(eid);
             session

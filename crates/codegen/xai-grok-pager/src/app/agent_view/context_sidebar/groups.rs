@@ -101,6 +101,7 @@ impl GroupId {
             Self::Context(ContextGroup::Continuation) => SidebarSection::ContextContinuation,
             Self::Context(ContextGroup::Notifications) => SidebarSection::ContextNotifications,
             Self::Context(ContextGroup::Retained) => SidebarSection::ContextRetained,
+            Self::Display(MessageGroup::Instructions) => SidebarSection::DisplayInstructions,
             Self::Display(MessageGroup::Conversation) => SidebarSection::DisplayConversation,
             Self::Display(MessageGroup::Files) => SidebarSection::DisplayFiles,
             Self::Display(MessageGroup::Research) => SidebarSection::DisplayResearch,
@@ -140,8 +141,8 @@ pub(super) fn all_display_leaf_kinds() -> impl Iterator<Item = MessageKind> {
 
 pub(super) fn next_display(value: Aggregate<DisplayForm>) -> DisplayForm {
     match value {
-        Aggregate::Uniform(DisplayForm::Collapsed) => DisplayForm::Expanded,
-        Aggregate::Uniform(DisplayForm::Expanded) | Aggregate::Mixed | Aggregate::Unavailable => DisplayForm::Collapsed,
+        Aggregate::Uniform(form) => form.next(),
+        Aggregate::Mixed | Aggregate::Unavailable => DisplayForm::Collapsed,
     }
 }
 

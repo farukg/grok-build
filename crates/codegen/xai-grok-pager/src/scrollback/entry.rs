@@ -264,6 +264,7 @@ impl ScrollbackEntry {
     /// Some blocks (like thinking) cycle through 3 modes.
     pub fn toggle_fold(&mut self) {
         let allowed = match self.display_mode {
+            DisplayMode::Hidden => false,
             DisplayMode::Collapsed => self.can_expand(),
             DisplayMode::Truncated | DisplayMode::Expanded => self.can_collapse(),
         };
@@ -453,7 +454,7 @@ impl ScrollbackEntry {
             self.selection_identity(),
             super::selection_identity::SelectablePart::Block,
         );
-        let tree = if self.display_mode != DisplayMode::Collapsed
+        let tree = if self.inline_body_expanded()
             && (self.block.is_bg_task() || self.block.is_subagent())
         {
             let projection = self.inline_projection.borrow();
@@ -613,6 +614,7 @@ impl ScrollbackEntry {
     }
 
     pub(crate) fn can_collapse(&self) -> bool {
+        if self.display_mode == DisplayMode::Hidden { return false; }
         if self.block.is_bg_task() || self.block.is_subagent() {
             return self.display_mode != DisplayMode::Collapsed;
         }
@@ -620,6 +622,7 @@ impl ScrollbackEntry {
     }
 
     pub(crate) fn can_expand(&self) -> bool {
+        if self.display_mode == DisplayMode::Hidden { return false; }
         if self.block.is_bg_task() || self.block.is_subagent() {
             return self
                 .inline_projection
@@ -641,6 +644,10 @@ impl ScrollbackEntry {
         self.inline_width.get()
     }
 
+    pub(crate) fn inline_body_expanded(&self) -> bool {
+        matches!(self.display_mode, DisplayMode::Truncated | DisplayMode::Expanded)
+    }
+
     pub(crate) fn inline_source_matches(&self, key: &SourceKey, width: u16) -> bool {
         self.inline_projection
             .borrow()
@@ -648,7 +655,7 @@ impl ScrollbackEntry {
             .is_some_and(|source| {
                 source.key == *key
                     && source.width == width
-                    && source.expanded == (self.display_mode != DisplayMode::Collapsed)
+                    && source.expanded == self.inline_body_expanded()
                     && !(source.expanded && matches!(source.body, SourceBody::Available))
             })
     }
@@ -731,9 +738,9 @@ impl ScrollbackEntry {
         )
     }
 
-    /// True for a thinking block hidden by the Appearance toggle. Takes the flag as a param so hot layout loops can hoist the cache read.
-    pub fn is_hidden_thinking(&self, show_thinking: bool) -> bool {
-        self.block.is_thinking() && !show_thinking
+    /// Presentation visibility. Hot layout loops hoist the Appearance flag read.
+    pub fn is_hidden(&self, show_thinking: bool) -> bool {
+        self.display_mode == DisplayMode::Hidden || (self.block.is_thinking() && !show_thinking)
     }
 
     /// Render without touching the entry's cache (dashboard peek renders at a foreign width).
@@ -754,7 +761,7 @@ impl ScrollbackEntry {
             return header;
         }
         self.inline_width.set(Some(ctx.width));
-        if ctx.mode == DisplayMode::Collapsed {
+        if matches!(ctx.mode, DisplayMode::Hidden | DisplayMode::Collapsed) {
             return header;
         }
         let projection = self.inline_projection.borrow();

@@ -449,11 +449,13 @@ impl BlockContent for SentMessageToolCallBlock {
     fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {
         if is_running {
             match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
                 DisplayMode::Truncated => DisplayMode::Expanded,
                 DisplayMode::Collapsed | DisplayMode::Expanded => DisplayMode::Truncated,
             }
         } else {
             match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
                 DisplayMode::Collapsed => DisplayMode::Expanded,
                 DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
             }

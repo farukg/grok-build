@@ -66,11 +66,11 @@ impl AgentView {
     /// Runs the gesture, then saves whatever it changed.
     pub(super) fn run_sidebar_command_saving(&mut self, command: SidebarCommand) -> InputOutcome {
         let forced = match (&self.context_sidebar, command) {
-            (ContextSidebar::Open(open), SidebarCommand::Activate | SidebarCommand::Bulk { .. }) => {
+            (ContextSidebar::Open(open), SidebarCommand::Activate | SidebarCommand::CycleBackward | SidebarCommand::Bulk { .. }) => {
                 match open.sidebar.cursor.and_then(|line| CursorTarget::of(line, open.disclosure)) {
                     Some(CursorTarget::Row(RowTarget::Group(GroupId::Display(group)))) => group.kinds().collect(),
-                    Some(CursorTarget::Row(RowTarget::Display(kind))) => if matches!(command, SidebarCommand::Activate) { vec![kind] } else { Vec::new() },
-                    Some(CursorTarget::Title(super::SectionId::Display)) => if matches!(command, SidebarCommand::Activate) {
+                    Some(CursorTarget::Row(RowTarget::Display(kind))) => if matches!(command, SidebarCommand::Activate | SidebarCommand::CycleBackward) { vec![kind] } else { Vec::new() },
+                    Some(CursorTarget::Title(super::SectionId::Display)) => if matches!(command, SidebarCommand::Activate | SidebarCommand::CycleBackward) {
                         super::groups::all_display_leaf_kinds().collect()
                     } else {
                         Vec::new()
@@ -78,7 +78,7 @@ impl AgentView {
                     Some(CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Group(GroupId::Context(_)) | RowTarget::Context(_) | RowTarget::DockPlacement | RowTarget::Todo)) | None => Vec::new(),
                 }
             }
-            (ContextSidebar::Closed, SidebarCommand::Activate | SidebarCommand::Bulk { .. })
+            (ContextSidebar::Closed, SidebarCommand::Activate | SidebarCommand::CycleBackward | SidebarCommand::Bulk { .. })
             | (ContextSidebar::Open(_) | ContextSidebar::Closed,
                 SidebarCommand::Tree(_) | SidebarCommand::ToggleDisplayScope
                 | SidebarCommand::ToggleContextScope | SidebarCommand::Inspect

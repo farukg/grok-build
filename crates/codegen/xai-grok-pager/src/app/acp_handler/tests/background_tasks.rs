@@ -113,6 +113,50 @@
         assert!(agent.session.tracker.pending_tool_entry_id(tc_id).is_none());
     }
 
+    #[test]
+    fn task_backgrounded_demotion_uses_hidden_kind_default_without_losing_source() {
+        use crate::scrollback::block::MessageKind;
+        use crate::scrollback::types::{DisplayForm, DisplayMode};
+
+        let mut app = make_app_with_agent("sess-1");
+        setup_pending_execute_tool(&mut app, "call-hidden");
+        let (eid, created_at, identity) = {
+            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+            agent.scrollback.choose_kind_default(MessageKind::BgTask, DisplayForm::Hidden);
+            let entry = agent.scrollback.entry_mut(0).unwrap();
+            let RenderBlock::ToolCall(crate::scrollback::blocks::ToolCallBlock::Execute(exec)) =
+                &mut entry.block else { panic!("expected Execute") };
+            exec.output = Some("retained stdout\nsecond line".into());
+            exec.description = Some("retained description".into());
+            (entry.id, entry.created_at, entry.selection_identity())
+        };
+        let start = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100);
+        handle(
+            make_ext_session_notification_with_method("sess-1", "x.ai/session/update",
+                XaiSessionUpdate::TaskBackgrounded {
+                    tool_call_id: "call-hidden".into(), task_id: "task-hidden".into(),
+                    command: "sleep 9999".into(), cwd: "/tmp".into(),
+                    output_file: "/tmp/task-hidden.log".into(), monitor_description: None,
+                    description: None, start_time: Some(start),
+                }),
+            &mut app,
+        );
+        let agent = test_agent(&app, AgentId(0));
+        assert_eq!(agent.scrollback.len(), 1);
+        let entry = agent.scrollback.get_by_id(eid).unwrap();
+        assert!(matches!(entry.block, RenderBlock::BgTask(_)));
+        assert_eq!(entry.display_mode(), DisplayMode::Hidden);
+        assert_eq!(entry.created_at, created_at);
+        assert_eq!(entry.selection_identity(), identity);
+        assert!(!entry.is_running);
+        assert!(!agent.scrollback.needs_animation());
+        let task = agent.session.bg_tasks.get("task-hidden").unwrap();
+        assert_eq!(task.scrollback_entry_id, Some(eid));
+        assert_eq!(task.stdout, "retained stdout\nsecond line");
+        assert_eq!(task.description.as_deref(), Some("retained description"));
+        assert_eq!(task.start_time, Some(start));
+    }
+
     /// Regression: late-detected is_background=true means raw_input arrives after the Execute block exists.
     /// The task_backgrounded that follows must demote the existing Execute block, not create a duplicate BgTask.
     #[test]

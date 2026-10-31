@@ -134,7 +134,7 @@ fn densified_tail_from(scrollback: &ScrollbackState, width: u16, start: usize,
     for index in (start..scrollback.len()).rev() {
         if tail.len() >= budget { break; }
         let Some(entry) = scrollback.entry(index) else { continue };
-        if entry.is_hidden_thinking(show_thinking) { continue; }
+        if entry.is_hidden(show_thinking) { continue; }
         let ctx = entry.context_with_mode(width, dense_mode(entry), appearance, cwd);
         let tree = entry.output_tree_uncached(&ctx);
         let remaining = budget - tail.len();

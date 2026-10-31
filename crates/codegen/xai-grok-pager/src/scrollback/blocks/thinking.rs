@@ -482,6 +482,7 @@ impl ThinkingBlock {
 impl BlockContent for ThinkingBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         match ctx.mode {
+            DisplayMode::Hidden => BlockOutput { lines: Vec::new() },
             DisplayMode::Collapsed => self.render_collapsed(ctx),
             DisplayMode::Truncated => self.render_truncated(ctx),
             DisplayMode::Expanded => self.render_expanded(ctx),
@@ -518,6 +519,7 @@ impl BlockContent for ThinkingBlock {
 
     fn next_fold_mode(&self, current: DisplayMode, _is_running: bool) -> DisplayMode {
         match current {
+            DisplayMode::Hidden => DisplayMode::Hidden,
             DisplayMode::Collapsed => DisplayMode::Expanded,
             DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
         }

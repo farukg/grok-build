@@ -73,6 +73,7 @@ fn form_name(form: DisplayForm) -> &'static str {
     match form {
         DisplayForm::Collapsed => "collapsed",
         DisplayForm::Expanded => "expanded",
+        DisplayForm::Hidden => "hidden",
     }
 }
 
@@ -80,6 +81,7 @@ fn form_from_name(name: &str) -> Option<DisplayForm> {
     match name {
         "collapsed" => Some(DisplayForm::Collapsed),
         "expanded" => Some(DisplayForm::Expanded),
+        "hidden" => Some(DisplayForm::Hidden),
         _ => None,
     }
 }
