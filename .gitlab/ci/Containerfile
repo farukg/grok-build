@@ -14,6 +14,21 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-ini
     && ln -s rustup /usr/local/bin/rustc \
     && rm /tmp/rustup-init.sh
 
+ARG CARGO_LOCALBUILD_FAMILY_URL
+ARG CARGO_LOCALBUILD_FAMILY_SHA256
+RUN test -n "$CARGO_LOCALBUILD_FAMILY_URL" \
+    && test -n "$CARGO_LOCALBUILD_FAMILY_SHA256" \
+    && curl --fail --location --proto '=https' --tlsv1.2 \
+        "$CARGO_LOCALBUILD_FAMILY_URL" -o /tmp/cargo-localbuild-family.tar.zst \
+    && echo "$CARGO_LOCALBUILD_FAMILY_SHA256  /tmp/cargo-localbuild-family.tar.zst" \
+        | sha256sum --check --status \
+    && mkdir -p /opt/sigma/cargo-localbuild \
+    && tar --zstd -xf /tmp/cargo-localbuild-family.tar.zst \
+        -C /opt/sigma/cargo-localbuild \
+    && test -x /opt/sigma/cargo-localbuild/bin/cargo-release \
+    && ln -s /opt/sigma/cargo-localbuild/bin/cargo-release /usr/local/bin/cargo-release \
+    && rm /tmp/cargo-localbuild-family.tar.zst
+
 ENV CARGO_TERM_COLOR=always \
     CARGO_HOME=/cache/grok-build/cargo \
     RUSTUP_HOME=/cache/grok-build/rustup \

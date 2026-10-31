@@ -53,7 +53,11 @@ cache_root="/cache/grok-build/${CI_PROJECT_ID}"
 
 # The nspawn runner binds /cache and container storage across jobs on this host.
 # Only the small, secret-free tools image uses layer caching; source stays a bind mount.
+: "${CARGO_LOCALBUILD_FAMILY_URL:?immutable cargo-localbuild family URL is required}"
+: "${CARGO_LOCALBUILD_FAMILY_SHA256:?cargo-localbuild family SHA-256 is required}"
 buildah bud --network=host --layers --pull=missing --tag "$image" \
+    --build-arg "CARGO_LOCALBUILD_FAMILY_URL=$CARGO_LOCALBUILD_FAMILY_URL" \
+    --build-arg "CARGO_LOCALBUILD_FAMILY_SHA256=$CARGO_LOCALBUILD_FAMILY_SHA256" \
     --file .gitlab/ci/Containerfile .gitlab/ci
 mkdir -p "$cache_root"
 buildah from --name "$container" "$image"
