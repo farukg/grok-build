@@ -7,10 +7,4 @@ if [[ ! "$CI_PROJECT_ID" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
-# The GitLab resource group does not settle orphaned executor writers.
-printf '%s\n' \
-    'Cleanup refused: nspawn executor writer settlement is not established.' \
-    'The executor owner must guarantee writer termination before container reclaim.' \
-    'Cargo-aware cleanup also requires delivered Cargo fork and cargo-localbuild tools in both CI container layers.' \
-    'No project containers, images, caches or dist artifacts were removed by this script.' >&2
-exit 1
+exec bash "${CI_PROJECT_DIR:?GitLab checkout is required}/.gitlab/ci/build.sh" cleanup

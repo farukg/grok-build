@@ -21,8 +21,17 @@ workflow:
 
 stages: [cleanup, validate, build]
 
-# Blocks consumers until executor writer settlement and Cargo cleanup delivery exist.
-# No project state is reclaimed while these owner contracts remain unresolved.
+variables:
+  CARGO_LOCALBUILD_DEPS_VARIANT_MIN_AGE_SECS: "1"
+  CARGO_LOCALBUILD_DEPS_USE_GUARD_SECS: "1"
+  CARGO_LOCALBUILD_KEEP_FITTEST_DEPS_VARIANTS: "1"
+  CARGO_LOCALBUILD_INCREMENTAL_SESSION_MAX_AGE_SECS: "1"
+  CARGO_LOCALBUILD_ARTIFACT_ORPHAN_MIN_AGE_SECS: "1"
+  CARGO_LOCALBUILD_KEEP_RECENT_BUILD_VARIANTS: "1"
+  # Zero is rejected; one second is the smallest supported configuration idle bound.
+  CARGO_LOCALBUILD_CONFIGURATION_IDLE_SECS: "1"
+
+# Release-target cleanup must succeed before any cache consumer runs.
 linux-cache-cleanup:
   stage: cleanup
   needs: []

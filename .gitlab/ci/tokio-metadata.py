@@ -10,7 +10,7 @@ import tomllib
 
 def main():
     mode, source, target = sys.argv[1:4]
-    if mode == "flags":
+    if mode in ("flags", "preserve-flags"):
         if "CARGO_ENCODED_RUSTFLAGS" in os.environ:
             flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
         elif "RUSTFLAGS" in os.environ:
@@ -26,7 +26,8 @@ def main():
             if isinstance(flags, str):
                 flags = shlex.split(flags)
         flags = [flag for flag in flags if flag]
-        flags.extend(["--cfg", "tokio_unstable"])
+        if mode == "flags":
+            flags.extend(["--cfg", "tokio_unstable"])
         sys.stdout.write("\x1f".join(flags))
     elif mode == "graph":
         metadata = json.loads(Path(source).read_text())
@@ -46,7 +47,7 @@ def main():
         print(f"features={','.join(sorted(node['features']))}")
         print("tokio_identities=1")
     else:
-        raise ValueError("expected flags or graph mode")
+        raise ValueError("expected flags, preserve-flags or graph mode")
 
 
 if __name__ == "__main__":

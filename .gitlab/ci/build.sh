@@ -59,6 +59,13 @@ mkdir -p "$cache_root"
 buildah from --name "$container" "$image"
 trap 'buildah rm "$container"' EXIT
 buildah run --network=host \
+    --env "CARGO_LOCALBUILD_DEPS_VARIANT_MIN_AGE_SECS=${CARGO_LOCALBUILD_DEPS_VARIANT_MIN_AGE_SECS:?Retention value is required}" \
+    --env "CARGO_LOCALBUILD_DEPS_USE_GUARD_SECS=${CARGO_LOCALBUILD_DEPS_USE_GUARD_SECS:?Retention value is required}" \
+    --env "CARGO_LOCALBUILD_KEEP_FITTEST_DEPS_VARIANTS=${CARGO_LOCALBUILD_KEEP_FITTEST_DEPS_VARIANTS:?Retention value is required}" \
+    --env "CARGO_LOCALBUILD_INCREMENTAL_SESSION_MAX_AGE_SECS=${CARGO_LOCALBUILD_INCREMENTAL_SESSION_MAX_AGE_SECS:?Retention value is required}" \
+    --env "CARGO_LOCALBUILD_ARTIFACT_ORPHAN_MIN_AGE_SECS=${CARGO_LOCALBUILD_ARTIFACT_ORPHAN_MIN_AGE_SECS:?Retention value is required}" \
+    --env "CARGO_LOCALBUILD_KEEP_RECENT_BUILD_VARIANTS=${CARGO_LOCALBUILD_KEEP_RECENT_BUILD_VARIANTS:?Retention value is required}" \
+    --env "CARGO_LOCALBUILD_CONFIGURATION_IDLE_SECS=${CARGO_LOCALBUILD_CONFIGURATION_IDLE_SECS:?Retention value is required}" \
     --volume "$CI_PROJECT_DIR:/build:rw" \
     --volume "$cache_root:/cache/grok-build:rw" \
     "$container" -- bash .gitlab/ci/build-linux.sh "$@"
