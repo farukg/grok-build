@@ -13,7 +13,7 @@ rustup toolchain install "$toolchain" --profile minimal --no-self-update
 case "${1:-release}" in
     release) ;;
     lockfile)
-        exec bash .gitlab/ci/lockfile.sh "$toolchain"
+        exec bash .gitlab/ci/lockfile.sh "$toolchain" "${@:2}"
         ;;
     format)
         rustup component add rustfmt --toolchain "$toolchain"

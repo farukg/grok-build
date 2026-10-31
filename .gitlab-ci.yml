@@ -59,7 +59,12 @@ linux-lockfile:
     GIT_DEPTH: "20"
   cache: []
   script:
-    - bash .gitlab/ci/build.sh lockfile
+    - |
+      if [[ -n ${LOCK_UPDATE_PACKAGE:-} || -n ${LOCK_UPDATE_VERSION:-} ]]; then
+        bash .gitlab/ci/build.sh lockfile --package "${LOCK_UPDATE_PACKAGE:-}" --precise "${LOCK_UPDATE_VERSION:-}"
+      else
+        bash .gitlab/ci/build.sh lockfile
+      fi
   artifacts:
     when: always
     name: cargo-lock-$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID-$CI_JOB_ID

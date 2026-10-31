@@ -3,6 +3,20 @@ set -euo pipefail
 
 : "${1:?Pinned toolchain is required from build-linux.sh}"
 toolchain=$1
+shift
+
+# --workspace preserves existing non-workspace locks; a bare update refreshes them.
+if (( $# == 0 )); then
+    update=(update --workspace)
+elif (( $# == 4 )) && [[ $1 == --package && $3 == --precise &&
+    $2 =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*@[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)*$ &&
+    $4 =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)*$ ]]; then
+    update=(update -p "$2" --precise "$4")
+else
+    printf 'Usage: lockfile.sh TOOLCHAIN [--package NAME@VERSION --precise VERSION]\n' >&2
+    exit 2
+fi
+
 artifact=dist/lockfile
 test -s "$artifact/provenance.txt"
 test -s "$artifact/committed.Cargo.lock"
@@ -13,15 +27,16 @@ fi
 trap 'cp "$artifact/committed.Cargo.lock" Cargo.lock' EXIT
 
 {
-    printf 'command=cargo +%s update --workspace\n' "$toolchain"
+    printf 'command=cargo +%s' "$toolchain"
+    printf ' %q' "${update[@]}"
+    printf '\n'
     cargo "+$toolchain" --version --verbose
     rustc "+$toolchain" --version --verbose
     sha256sum .gitlab-ci.yml .gitlab/ci/{Containerfile,build.sh,build-linux.sh,lockfile.sh} \
         rust-toolchain.toml "$artifact/committed.Cargo.lock"
 } >> "$artifact/provenance.txt"
 
-# --workspace preserves existing non-workspace locks; a bare update refreshes them.
-if cargo "+$toolchain" update --workspace; then
+if cargo "+$toolchain" "${update[@]}"; then
     cp Cargo.lock "$artifact/Cargo.lock"
     (cd "$artifact" && sha256sum Cargo.lock > Cargo.lock.sha256)
 else
