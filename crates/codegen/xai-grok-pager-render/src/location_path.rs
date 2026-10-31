@@ -1,7 +1,5 @@
 use std::borrow::Cow;
 
-use unicode_width::UnicodeWidthStr;
-
 /// Display-only middle-component shortener for already-abbreviated location paths.
 ///
 /// After a `~` / `$GROK_HOME` prefix (or a leading `/` / drive letter / UNC
@@ -138,25 +136,6 @@ fn shorten_location_component(component: &str) -> &str {
         }
     }
     component.get(..end).unwrap_or("")
-}
-
-/// Fit a location path into `budget` display columns: the full spelling when it
-/// fits, then [`shorten_location_path`]'s middle shortening (basename and its
-/// parent stay full), then the bounded final `…` truncation.
-pub(crate) fn fit_location_path(path: &str, budget: usize) -> Cow<'_, str> {
-    if path.width() <= budget {
-        return Cow::Borrowed(path);
-    }
-    let shortened = shorten_location_path(path);
-    if shortened.width() <= budget {
-        return shortened;
-    }
-    match shortened {
-        Cow::Borrowed(value) => crate::util::truncate_to_width(value, budget),
-        Cow::Owned(value) => {
-            Cow::Owned(crate::util::truncate_to_width(&value, budget).into_owned())
-        }
-    }
 }
 
 #[cfg(test)]

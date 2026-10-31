@@ -43,7 +43,7 @@ use crate::extensions::notification::{
     SessionNotification as XaiSessionNotification, SessionUpdate as XaiSessionUpdate,
 };
 use crate::session::info::Info;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 /// - Version 0: Legacy ChatRequestMessage format (default for old sessions)
 /// - Version 1: ConversationItem format (used for new sessions)
