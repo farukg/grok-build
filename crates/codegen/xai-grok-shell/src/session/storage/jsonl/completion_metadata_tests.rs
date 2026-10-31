@@ -1,7 +1,8 @@
 use super::*;
 use crate::agent::subagent::{
-    RecordedSubagentOwner, SubagentMeta, SubagentMetaStatus, SubagentSessionMetadata,
+    SubagentMeta, SubagentMetaStatus, SubagentSessionMetadata,
 };
+use xai_grok_tools::implementations::grok_build::task::inventory::RecordedSubagentOwner;
 use crate::extensions::subagent_context::SubagentContext;
 
 #[tokio::test]
@@ -64,6 +65,7 @@ async fn producer_commit_materializes_terminal_metadata_without_parent_publicati
         let metadata = SubagentMeta {
             subagent_id: outcome.id.subagent_id.clone(),
             recorded_owner: recorded_owner.clone(),
+            recorded_spawner: None,
             attempt_id: Some(outcome.id.attempt_id.to_string()),
             parent_session_id: info.id.to_string(),
             child_session_id: outcome.child_session_id.clone(),

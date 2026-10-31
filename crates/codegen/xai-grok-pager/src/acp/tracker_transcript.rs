@@ -251,3 +251,93 @@ impl AcpUpdateTracker {
         }
     }
 }
+
+pub(super) enum InterjectionProjection {
+    Optimistic(EntryId),
+    RetryQueued(u64),
+    Accepted(EntryId),
+    AcceptedRetry { entry: EntryId, queue_id: u64 },
+}
+
+impl InterjectionProjection {
+    fn entry(&self) -> Option<EntryId> {
+        match self {
+            Self::Optimistic(entry) | Self::Accepted(entry)
+            | Self::AcceptedRetry { entry, .. } => Some(*entry),
+            Self::RetryQueued(_) => None,
+        }
+    }
+
+    fn accept(&mut self, entry: EntryId) {
+        *self = match self {
+            Self::RetryQueued(queue_id) | Self::AcceptedRetry { queue_id, .. } => {
+                Self::AcceptedRetry { entry, queue_id: *queue_id }
+            }
+            Self::Optimistic(_) | Self::Accepted(_) => Self::Accepted(entry),
+        };
+    }
+}
+
+impl AcpUpdateTracker {
+    pub(crate) fn bind_interjection(&mut self, id: &str, entry: EntryId) {
+        let projection = self.interjection_entries.entry(id.to_owned())
+            .or_insert(InterjectionProjection::Optimistic(entry));
+        if matches!(projection, InterjectionProjection::RetryQueued(_)) {
+            *projection = InterjectionProjection::Optimistic(entry);
+        }
+    }
+
+    pub(crate) fn accepted_interjection(&self, id: &str) -> bool {
+        matches!(self.interjection_entries.get(id), Some(
+            InterjectionProjection::Accepted(_) | InterjectionProjection::AcceptedRetry { .. }
+        ))
+    }
+
+    pub(crate) fn queue_interjection_retry(&mut self, id: &str, queue_id: u64) {
+        self.interjection_entries.insert(id.to_owned(), InterjectionProjection::RetryQueued(queue_id));
+    }
+
+    pub(crate) fn take_interjection_retry(&mut self, id: &str) -> Option<u64> {
+        let projection = self.interjection_entries.get_mut(id)?;
+        match projection {
+            InterjectionProjection::AcceptedRetry { entry, queue_id } => {
+                let queue_id = *queue_id;
+                *projection = InterjectionProjection::Accepted(*entry);
+                Some(queue_id)
+            }
+            InterjectionProjection::Optimistic(_) | InterjectionProjection::RetryQueued(_)
+            | InterjectionProjection::Accepted(_) => None,
+        }
+    }
+
+    pub(crate) fn reject_interjection(&mut self, id: &str) -> bool {
+        match self.interjection_entries.get(id) {
+            Some(InterjectionProjection::Accepted(_) | InterjectionProjection::AcceptedRetry { .. }
+                | InterjectionProjection::RetryQueued(_)) => false,
+            Some(InterjectionProjection::Optimistic(_)) | None => {
+                self.interjection_entries.remove(id);
+                true
+            }
+        }
+    }
+
+    pub(crate) fn project_interjection(
+        &mut self,
+        id: &str,
+        text: &str,
+        scrollback: &mut ScrollbackState,
+    ) -> bool {
+        if let Some(projection) = self.interjection_entries.get_mut(id)
+            && let Some(entry) = projection.entry()
+            && scrollback.index_of_id(entry).is_some()
+        {
+            projection.accept(entry);
+            return false;
+        }
+        let entry = scrollback.push_block(RenderBlock::interjection_prompt(text));
+        self.interjection_entries.entry(id.to_owned())
+            .and_modify(|projection| projection.accept(entry))
+            .or_insert(InterjectionProjection::Accepted(entry));
+        true
+    }
+}

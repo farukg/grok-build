@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "tracker_authority_tests.rs"]
+mod authority_tests;
+
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -142,11 +146,19 @@ pub struct WorkflowAgentRow {
 
 pub(crate) const WORKFLOW_AGENT_ROWS_MAX: usize = 256;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowEpisodeId {
+    pub run_id: String,
+    pub execution_epoch: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRunState {
     pub run_id: String,
     #[serde(default)]
     pub revision: u64,
+    #[serde(default)]
+    pub execution_epoch: u64,
     pub name: String,
     pub objective: String,
     pub status: WorkflowRunStatus,
@@ -177,6 +189,13 @@ pub struct WorkflowRunState {
 }
 
 impl WorkflowRunState {
+    pub(crate) fn episode(&self) -> WorkflowEpisodeId {
+        WorkflowEpisodeId {
+            run_id: self.run_id.clone(),
+            execution_epoch: self.execution_epoch,
+        }
+    }
+
     fn advance_revision(&mut self) {
         self.revision = self.revision.saturating_add(1);
     }
@@ -211,7 +230,6 @@ pub(crate) struct WorkflowTracker {
 struct TrackedRun {
     state: WorkflowRunState,
     active_since: Option<Instant>,
-    execution_epoch: u64,
 }
 
 impl WorkflowTracker {
@@ -242,6 +260,7 @@ impl WorkflowTracker {
         let mut state = WorkflowRunState {
             run_id,
             revision: 0,
+            execution_epoch: 0,
             name,
             objective,
             status: WorkflowRunStatus::Active,
@@ -262,7 +281,6 @@ impl WorkflowTracker {
         self.runs.push(TrackedRun {
             state: state.clone(),
             active_since: Some(Instant::now()),
-            execution_epoch: 0,
         });
         state
     }
@@ -286,6 +304,7 @@ impl WorkflowTracker {
         {
             return None;
         }
+        let execution_epoch = run.state.execution_epoch.checked_add(1)?;
         if let Some(budget) = candidate_budget {
             run.state.agent_budget = Some(budget);
         }
@@ -299,7 +318,7 @@ impl WorkflowTracker {
         }
         run.state.record_event("workflow_resumed", None);
         run.active_since = Some(Instant::now());
-        run.execution_epoch = run.execution_epoch.wrapping_add(1);
+        run.state.execution_epoch = execution_epoch;
         let state = run.state.clone();
         self.reported_terminal_run_ids.retain(|(id, _)| id != run_id);
         self.terminal_at_restore_run_ids.remove(run_id);
@@ -356,7 +375,7 @@ impl WorkflowTracker {
         self.runs
             .iter()
             .find(|run| run.state.run_id == run_id)
-            .map(|run| run.execution_epoch)
+            .map(|run| run.state.execution_epoch)
     }
 
     pub(crate) fn reconcile_agents_used(
@@ -648,7 +667,6 @@ impl WorkflowTracker {
                 TrackedRun {
                     state,
                     active_since: None,
-                    execution_epoch: 0,
                 }
             })
             .collect::<Vec<TrackedRun>>();

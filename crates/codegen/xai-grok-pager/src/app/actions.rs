@@ -2200,6 +2200,7 @@ pub enum Effect {
     /// Send a mid-turn interjection via x.ai/interject ext method.
     SendInterject {
         agent_id: AgentId,
+        binding: xai_grok_shell::session::current_actions::SnapshotBinding,
         session_id: acp::SessionId,
         text: String,
         /// Client-minted id echoed back on the `x.ai/session/interjection` broadcast so the originator can dedup its optimistic local block.
@@ -3293,12 +3294,14 @@ pub enum TaskResult {
     /// Interjection queued acknowledgement.
     InterjectQueued {
         agent_id: AgentId,
+        binding: xai_grok_shell::session::current_actions::SnapshotBinding,
     },
     /// Interjection send failed.
     /// Carries the payload so the dispatcher can requeue it (mirrors the batch path's `failed_local` requeue).
     /// The queue row was already removed optimistically, so dropping the text here would silently lose the user's message.
     InterjectFailed {
         agent_id: AgentId,
+        binding: xai_grok_shell::session::current_actions::SnapshotBinding,
         error: String,
         remaining: Vec<(
             String,

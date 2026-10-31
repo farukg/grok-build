@@ -25,6 +25,9 @@ pub mod metrics;
 mod prewarm;
 mod request_body;
 pub mod request_capture;
+pub mod instruction_projection;
+#[cfg(test)]
+mod instruction_projection_tests;
 mod request_compression;
 pub mod request_preview;
 #[cfg(test)]

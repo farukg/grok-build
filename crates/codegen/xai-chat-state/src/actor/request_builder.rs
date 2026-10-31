@@ -178,6 +178,12 @@ impl ChatStateActor {
                 && !reason.is_primary()
             {
                 injected_records.push(InjectedRequestRecord::Synthetic {
+                    interjection: match item {
+                        ConversationItem::User(user) => user.interjection.clone(),
+                        ConversationItem::System(_) | ConversationItem::Assistant(_)
+                        | ConversationItem::ToolResult(_) | ConversationItem::BackendToolCall(_)
+                        | ConversationItem::Reasoning(_) => None,
+                    },
                     reason: reason.clone(),
                     text: item.text_content(),
                     source: item.source(),

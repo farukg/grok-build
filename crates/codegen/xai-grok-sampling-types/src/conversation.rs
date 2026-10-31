@@ -7,10 +7,10 @@ mod chat_completions;
 mod messages;
 mod responses;
 
-pub use chat_completions::{conversation_item_to_chat_message, conversation_to_chat_messages};
-pub use messages::build_messages_request;
+pub use chat_completions::{chat_request_with_instructions, conversation_item_to_chat_message, conversation_to_chat_messages};
+pub use messages::{build_messages_request, messages_request_with_instructions};
 pub use responses::{
-    extra_tool_entries, patch_reasoning_text_types, response_to_conversation_items,
+    extra_tool_entries, patch_reasoning_text_types, response_to_conversation_items, responses_request_with_instructions,
 };
 
 use std::sync::Arc;
@@ -302,9 +302,17 @@ pub enum PriorTurnInterrupt {
     Unknown,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InterjectionIdentity {
+    pub id: String,
+    pub display_text: String,
+}
+
 /// User message with text and optional images
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interjection: Option<InterjectionIdentity>,
     #[serde(
         default,
         skip_serializing_if = "crate::SourceOccurrence::is_unadmitted"
@@ -1074,6 +1082,7 @@ impl ConversationItem {
     /// For synthetic injections, use a dedicated constructor such as [`ConversationItem::user_meta`] or [`ConversationItem::system_reminder`].
     pub fn user(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1090,6 +1099,7 @@ impl ConversationItem {
     /// Create a user message with multiple content parts, tagged [`SyntheticReason::Human`] for real user input.
     pub fn user_with_parts(parts: Vec<ContentPart>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: parts,
@@ -1104,6 +1114,7 @@ impl ConversationItem {
     /// The startup `<user_info>` / rules / VCS-status prefix, tagged [`SyntheticReason::SessionPrefix`].
     pub fn session_prefix(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1123,6 +1134,7 @@ impl ConversationItem {
         rules: impl Into<String>,
     ) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![
@@ -1147,6 +1159,7 @@ impl ConversationItem {
     /// The command-and-output history message of a `!cmd` turn, tagged [`SyntheticReason::DirectBash`].
     pub fn direct_bash(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1163,6 +1176,7 @@ impl ConversationItem {
     /// The rules and objective that open a `/goal`, tagged [`SyntheticReason::GoalSetup`].
     pub fn goal_setup(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1181,6 +1195,7 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::CompactionMeta`] so downstream code (pruning, compaction helpers) skips it.
     pub fn user_meta(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1199,6 +1214,7 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::SystemReminder`] so downstream code can skip it when counting real user prompts.
     pub fn system_reminder(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1215,6 +1231,7 @@ impl ConversationItem {
     /// The skill and workflow catalog reminder, tagged [`SyntheticReason::SkillCatalog`].
     pub fn skill_catalog(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1231,6 +1248,7 @@ impl ConversationItem {
     /// The MCP server catalog reminder, tagged [`SyntheticReason::McpCatalog`].
     pub fn mcp_catalog(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1247,6 +1265,7 @@ impl ConversationItem {
     /// The synthetic continue reminder, tagged [`SyntheticReason::LengthContinue`].
     pub fn length_continue_reminder(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1277,6 +1296,7 @@ impl ConversationItem {
     /// Once in the conversation, it MUST NOT be replaced or re-inserted; see the variant docstring.
     pub fn project_instructions(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1293,6 +1313,7 @@ impl ConversationItem {
     /// Working-directory switch reminder with a structural generation marker.
     pub fn working_directory_switch(content: impl Into<String>, cwd_generation: u64) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1309,6 +1330,7 @@ impl ConversationItem {
     /// Create a model-authored message received from another agent.
     pub fn agent_message(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1327,6 +1349,7 @@ impl ConversationItem {
     /// never treats human input as model-authored.
     pub fn parent_human_message(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1345,6 +1368,7 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::AutoContinue`] so it is not counted as a real user prompt by truncation / rewind logic.
     pub fn auto_continue(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1363,6 +1387,7 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::AutoRecovery`] so it is not counted as a real user prompt by truncation / rewind logic.
     pub fn auto_recovery(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1380,6 +1405,7 @@ impl ConversationItem {
     /// Compaction, replay, and analytics can then distinguish it from real prompts and other synthetic injections.
     pub fn interjection(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1396,6 +1422,7 @@ impl ConversationItem {
     /// Auto-wake synthetic prompt for a completed background bash task.
     pub fn task_completed(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1412,6 +1439,7 @@ impl ConversationItem {
     /// Auto-wake synthetic prompt for a completed background subagent.
     pub fn subagent_completed(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1428,6 +1456,7 @@ impl ConversationItem {
     /// Idle-gated notification drain (batched completions / monitor events).
     pub fn notification_drain(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1444,6 +1473,7 @@ impl ConversationItem {
     /// Goal orchestrator summary turn.
     pub fn goal_summary(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1462,6 +1492,7 @@ impl ConversationItem {
     /// The wire role/tag is the same `<system-reminder>` shape for both.
     pub fn goal_classifier_nudge(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1478,6 +1509,7 @@ impl ConversationItem {
     /// Scheduled task (`/loop`) prompt fired by the scheduler.
     pub fn scheduler_fired(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {
@@ -1494,6 +1526,7 @@ impl ConversationItem {
     /// See [`SyntheticReason::StopHookFeedback`].
     pub fn stop_hook_feedback(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            interjection: None,
             evidence: Default::default(),
             source: Default::default(),
             content: vec![ContentPart::Text {

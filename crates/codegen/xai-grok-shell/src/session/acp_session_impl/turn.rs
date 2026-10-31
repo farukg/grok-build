@@ -773,6 +773,9 @@ impl SessionActor {
             Ok(blocks) => {
                 if matches!(input_origin.as_prompt_origin(), PromptOrigin::User) {
                     self.reactivate_for_new_user_message().await?;
+                    self.clear_wake_suppression(super::cancel::WakeReengagement::NewHumanMessage)
+                        .await.map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+                    self.open_subagent_spawn_admission();
                 }
                 blocks
             },
@@ -1004,6 +1007,10 @@ impl SessionActor {
                 serde_json::json!(reason),
             );
         }
+        if let Some(identity) = input_origin.interjection() {
+            chunk_meta.insert("interjectionIdentity".into(), serde_json::json!(identity));
+            chunk_meta.insert(crate::session::storage::INTERJECTION_META_KEY.into(), serde_json::json!(true));
+        }
         let user_chunk_meta = Some(chunk_meta);
         let text = prompt_blocks.iter().fold(String::new(), |mut acc, b| {
             if let acp::ContentBlock::Text(t) = b {
@@ -1233,14 +1240,6 @@ impl SessionActor {
             self.inject_fork_reminder().await;
             self.inject_resumed_tasks_reminder();
             if policy.authority.is_human_intent() {
-                self.set_completion_wake_policy(
-                    crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-                );
-                xai_grok_telemetry::unified_log::info(
-                    "shell.task_wake.gate_cleared",
-                    Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!({ "reason": "handle_prompt_user_start" })),
-                );
                 self.consume_deferred_completions_for_user_turn().await;
             }
             self.drain_between_turn_completions(&commit_ids).await;
@@ -1339,6 +1338,9 @@ impl SessionActor {
                     item
                 }
             };
+            if let ConversationItem::User(user) = &mut user_chat {
+                user.interjection = input_origin.interjection().cloned();
+            }
             user_chat.set_prompt_index(current_prompt_index);
             if !self.is_cursor_harness() {
                 for image in &user_images {

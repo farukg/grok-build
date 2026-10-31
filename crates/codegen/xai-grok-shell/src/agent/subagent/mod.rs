@@ -39,6 +39,7 @@ use xai_grok_session_events::types::CancellationCategory;
 use xai_grok_subagent_resolution::ResumeSourceData;
 use xai_grok_tools::implementations::grok_build::monitor::types::MonitorEventBuffer;
 use xai_grok_tools::implementations::grok_build::task::types::*;
+use xai_grok_tools::implementations::grok_build::task::inventory::{RecordedSubagentOwner, RecordedSubagentSpawner};
 use xai_grok_tools::types::tool::ToolKind;
 use xai_grok_workspace::file_system::AsyncFileSystem;
 use xai_hunk_tracker::HunkTrackerHandle;
@@ -47,6 +48,7 @@ mod completion_publication;
 mod spawn;
 pub(crate) use completion_publication::completion_lifecycle_notification_from_event;
 mod metadata_store;
+pub(crate) mod inventory;
 use completion_publication::*;
 pub(crate) use metadata_store::{
     materialize_artifacts as materialize_completion_artifacts,
@@ -2338,13 +2340,6 @@ impl SubagentMetaStatus {
         }
     }
 }
-/// Recorded spawn provenance, not execution or resume authority.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum RecordedSubagentOwner {
-    Task,
-    Workflow { run_id: String },
-}
 /// Metadata stored as `meta.json` in the child session directory.
 /// Links the child session back to its parent.
 /// For the GCS-persisted artifact (`subagent.json`), see [`SubagentSessionMetadata`].
@@ -2353,6 +2348,8 @@ pub struct SubagentMeta {
     pub subagent_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded_owner: Option<RecordedSubagentOwner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_spawner: Option<RecordedSubagentSpawner>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
     pub parent_session_id: String,
@@ -2406,6 +2403,8 @@ pub(crate) struct SubagentSessionMetadata {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded_owner: Option<RecordedSubagentOwner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_spawner: Option<RecordedSubagentSpawner>,
     pub session_id: String,
     pub session_kind: String,
     pub subagent_id: String,
@@ -2480,6 +2479,7 @@ impl SubagentSessionMetadata {
         Self {
             schema_version: Self::SCHEMA_VERSION,
             recorded_owner: meta.recorded_owner.clone(),
+            recorded_spawner: meta.recorded_spawner.clone(),
             session_id: meta.child_session_id.clone(),
             session_kind: session_kind.to_string(),
             subagent_id: meta.subagent_id.clone(),

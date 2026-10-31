@@ -378,7 +378,7 @@ async fn local_body_debug_is_opaque_and_publication_preserves_redaction_evidence
     };
     let sensitive = ["sk-", &"q".repeat(32)].concat();
     let bytes = serde_json::to_vec(&serde_json::json!({"content": sensitive})).unwrap();
-    capture.prepared(&bytes);
+    capture.prepared(&bytes, None);
     let event = rx.recv().await.unwrap();
     assert!(!format!("{event:?}").contains(&sensitive));
     let SamplingEvent::LocalRequest {

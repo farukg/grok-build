@@ -89,6 +89,7 @@ pub struct QueuedPrompt {
     pub chip_elements: Vec<ChipElement>,
     /// Combined-turn display segments (always at least two); drain paints one bubble each.
     pub combined_texts: Vec<String>,
+    pub interjection: Option<xai_grok_sampling_types::InterjectionIdentity>,
 }
 impl QueuedPrompt {
     /// Base row with every optional field at its default.
@@ -105,6 +106,7 @@ impl QueuedPrompt {
             skill_token_ranges: Vec::new(),
             chip_elements: Vec::new(),
             combined_texts: Vec::new(),
+            interjection: None,
         }
     }
     /// Whether the wire payload is exactly the display text.
@@ -1107,6 +1109,14 @@ impl AgentSession {
         }
         id
     }
+    pub(crate) fn retire_interjection_retry(&mut self, id: &str) -> bool {
+        let Some(queue_id) = self.tracker.take_interjection_retry(id) else {
+            return false;
+        };
+        let before = self.pending_prompts.len();
+        self.pending_prompts.retain(|prompt| prompt.id != queue_id);
+        self.pending_prompts.len() != before
+    }
     /// Pop the front prompt from the queue (next to send).
     pub fn dequeue_prompt(&mut self) -> Option<QueuedPrompt> {
         self.pending_prompts.pop_front()
@@ -1131,7 +1141,7 @@ impl AgentSession {
             .zip(id_strings.iter())
             .map(|(p, id)| CombineGate {
                 id: id.as_str(),
-                is_plain_prompt: p.kind == QueueEntryKind::Prompt,
+                is_plain_prompt: p.kind == QueueEntryKind::Prompt && p.interjection.is_none(),
                 is_synthetic: false,
                 is_expanded_skill: !p.wire_matches_display(),
                 is_bash: p.kind == QueueEntryKind::BashCommand,

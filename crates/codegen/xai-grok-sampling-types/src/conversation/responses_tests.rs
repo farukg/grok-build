@@ -1241,7 +1241,7 @@ fn build_responses_input_preserves_multi_turn_ordering() {
     ];
 
     let req = ConversationRequest::from_items(items);
-    let input = super::responses::build_responses_input(&req);
+    let (input, _) = super::responses::build_responses_input(&req);
     let rs::InputParam::Items(wire_items) = input else {
         panic!("expected Items input");
     };

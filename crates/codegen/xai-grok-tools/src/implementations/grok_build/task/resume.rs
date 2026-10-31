@@ -26,14 +26,17 @@ pub fn match_subagent_reference<'a>(
     keys: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> SubagentReferenceMatch {
     let accepts_prefix = reference.len() >= MIN_SUBAGENT_ID_PREFIX_LEN;
+    let mut exact: Vec<&str> = Vec::new();
     let mut prefixed: Vec<&str> = Vec::new();
     for (key, subagent_id) in keys {
         if key == reference {
-            return SubagentReferenceMatch::Unique(subagent_id.to_owned());
-        }
-        if accepts_prefix && key.starts_with(reference) {
+            exact.push(subagent_id);
+        } else if accepts_prefix && key.starts_with(reference) {
             prefixed.push(subagent_id);
         }
+    }
+    if !exact.is_empty() {
+        prefixed = exact;
     }
     prefixed.sort_unstable();
     prefixed.dedup();
@@ -302,6 +305,7 @@ pub fn human_resume_request(
         cancel_token: tokio_util::sync::CancellationToken::new(),
         spawn_root: Default::default(),
         tool_call_id: None,
+        recorded_spawner: None,
     }
 }
 

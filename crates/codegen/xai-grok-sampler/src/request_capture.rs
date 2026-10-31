@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use xai_grok_sampling_types::ProjectedRequestMember;
+use xai_grok_sampling_types::instruction_projection::ProviderInstructionPlan;
+use crate::instruction_projection::{CapturedInstructions, InstructionProjectionUnavailable, InstructionPublication, PreparedInstructionBinding};
 
 use crate::{ApiBackend, RequestId, SamplingEvent};
 
@@ -17,6 +19,7 @@ pub struct RequestAttemptId(pub u64);
 pub struct LocalRequestBody {
     bytes: Arc<[u8]>,
     digest: blake3::Hash,
+    instructions: CapturedInstructions,
 }
 
 impl fmt::Debug for LocalRequestBody {
@@ -32,6 +35,7 @@ impl LocalRequestBody {
         Self {
             digest: blake3::hash(&bytes),
             bytes: bytes.into(),
+            instructions: CapturedInstructions::Unavailable { reason: InstructionProjectionUnavailable::NotPrepared },
         }
     }
 
@@ -44,17 +48,17 @@ impl LocalRequestBody {
         &self.bytes
     }
 
+    pub fn instructions(&self) -> &CapturedInstructions {
+        &self.instructions
+    }
+
+    pub fn instruction_publication(&self) -> Result<InstructionPublication, serde_json::Error> {
+        self.instructions.publication(&self.bytes)
+    }
+
     pub fn publication_view(&self) -> Result<PublicationBody, serde_json::Error> {
         let mut value: serde_json::Value = serde_json::from_slice(&self.bytes)?;
-        let mut changed = false;
-        xai_grok_secrets::walk_json_strings(&mut value, &mut |text| {
-            let scrubbed = xai_grok_secrets::redact_secrets(text);
-            let scrubbed = xai_grok_secrets::redact_user_paths(scrubbed.as_ref()).into_owned();
-            if scrubbed != *text {
-                *text = scrubbed;
-                changed = true;
-            }
-        });
+        let changed = redact_json(&mut value);
         let representation = if changed {
             PayloadRepresentation::Redacted {
                 original_digest: *self.digest.as_bytes(),
@@ -72,6 +76,19 @@ impl LocalRequestBody {
             representation,
         })
     }
+}
+
+pub(crate) fn redact_json(value: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    xai_grok_secrets::walk_json_strings(value, &mut |text| {
+        let scrubbed = xai_grok_secrets::redact_secrets(text);
+        let scrubbed = xai_grok_secrets::redact_user_paths(scrubbed.as_ref()).into_owned();
+        if scrubbed != *text {
+            *text = scrubbed;
+            changed = true;
+        }
+    });
+    changed
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,20 +168,30 @@ impl CaptureAttempt {
         });
     }
 
-    pub fn prepared(&self, bytes: &[u8]) {
+    pub fn prepared(&self, bytes: &[u8], plan: Option<&ProviderInstructionPlan>) {
         let digest = blake3::hash(bytes);
+        let instructions = CapturedInstructions::prepared(PreparedInstructionBinding {
+            request_id: self.request_id.clone(), attempt: self.attempt,
+            backend: self.backend.clone(), body_digest: *digest.as_bytes(),
+        }, bytes, plan);
         let mut cache = match self.cache.0.lock() {
             Ok(cache) => cache,
             Err(poisoned) => poisoned.into_inner(),
         };
         let body = match cache.as_ref() {
-            Some(previous) if previous.digest == digest && previous.bytes.as_ref() == bytes => {
+            Some(previous) if previous.digest == digest && previous.bytes.as_ref() == bytes
+                && previous.instructions == instructions => {
                 Arc::clone(previous)
             }
             Some(_) | None => {
+                let bytes = match cache.as_ref() {
+                    Some(previous) if previous.digest == digest && previous.bytes.as_ref() == bytes => Arc::clone(&previous.bytes),
+                    Some(_) | None => bytes.into(),
+                };
                 let body = Arc::new(LocalRequestBody {
-                    bytes: bytes.into(),
+                    bytes,
                     digest,
+                    instructions,
                 });
                 *cache = Some(Arc::clone(&body));
                 body

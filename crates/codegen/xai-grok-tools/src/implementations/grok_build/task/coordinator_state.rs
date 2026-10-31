@@ -1,3 +1,6 @@
+mod inventory;
+pub(super) use inventory::{completed_inspection, completed_resident_inspection, pending_inspection, queued_inspection, resident_inspection, running_inspection};
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -11,7 +14,7 @@ use xai_tool_types::{InterruptionCause, SubagentState};
 use super::coordinator::ActiveChildGeneration;
 use super::coordinator::active_message::ActiveMessageLifecycle;
 use super::types::{
-    ActiveAgentMessageDelivery, ActiveSubagentSummary, AgentAddress, ChildObservation,
+    ActiveAgentMessageDelivery, ActiveSubagentSummary, AgentAddress,
     SubagentCompletionSummary, SubagentDescribeOutcome, SubagentInspection, SubagentRequest, SubagentResult,
     SubagentResumeLookup, SubagentSnapshot, SubagentSnapshotStatus, SubagentValidateTypeOutcome,
 };
@@ -227,6 +230,7 @@ impl<D: Clone> CompletionPreparation<'_, D> {
 pub(super) enum TerminalOutput<D> {
     Finishing(ChildRunOutput<D>),
     Committing {
+        origin: CompletedOrigin,
         completion: ChildCompletion<D>,
         recipient: CompletionRecipient,
     },
@@ -794,13 +798,35 @@ pub(super) struct ActiveChild<C> {
     pub(super) control: C,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum CompletedOrigin {
+    NotStarted { admitted_at: std::time::Instant },
+    Attempt { started_at: std::time::Instant },
+}
+
+impl CompletedOrigin {
+    pub(super) fn since(&self) -> std::time::Instant {
+        match self {
+            Self::NotStarted { admitted_at } => *admitted_at,
+            Self::Attempt { started_at } => *started_at,
+        }
+    }
+
+    pub(super) fn attempt_evidence(&self, attempt: &xai_message_delivery_core::AttemptId) -> super::inventory::AttemptEvidence {
+        match self {
+            Self::NotStarted { .. } => super::inventory::AttemptEvidence::NotStarted,
+            Self::Attempt { .. } => super::inventory::AttemptEvidence::Known(attempt.clone()),
+        }
+    }
+}
+
 pub(super) struct CompletedChild {
     pub(super) attempt_id: xai_message_delivery_core::AttemptId,
     pub(super) completion_age: u64,
     pub(super) publication: TerminalPublicationState,
     pub(super) reply_target: CompletionReplyTarget,
     pub(super) request: SubagentRequest,
-    pub(super) started_at: std::time::Instant,
+    pub(super) origin: CompletedOrigin,
     pub(super) child_session_id: String,
     pub(super) persona: Option<String>,
     pub(super) resumed_from: Option<String>,
@@ -813,6 +839,12 @@ pub(super) struct CompletedChild {
     pub(super) spawner_session_id: Option<String>,
     pub(super) wake_eligible: bool,
     pub(super) result: SubagentResult,
+}
+
+impl CompletedChild {
+    pub(super) fn attempt_evidence(&self) -> super::inventory::AttemptEvidence {
+        self.origin.attempt_evidence(&self.attempt_id)
+    }
 }
 
 pub(super) struct BlockingWaiter {
@@ -941,6 +973,9 @@ where
 
 #[derive(Clone)]
 pub(super) struct RunningSeed {
+    pub(super) attempt: super::inventory::AttemptEvidence,
+    pub(super) recorded_owner: super::inventory::RecordedSubagentOwner,
+    pub(super) recorded_spawner: Option<super::inventory::RecordedSubagentSpawner>,
     pub(super) subagent_id: String,
     pub(super) description: String,
     pub(super) subagent_type: String,
@@ -1285,6 +1320,9 @@ pub(super) fn active_summary<C>(child: &ActiveChild<C>) -> ActiveSubagentSummary
 
 pub(super) fn running_seed<C>(child: &ActiveChild<C>) -> RunningSeed {
     RunningSeed {
+        attempt: super::inventory::AttemptEvidence::Known(child.attempt_id.clone()),
+        recorded_owner: inventory::recorded_owner(&child.request.owner),
+        recorded_spawner: child.request.recorded_spawner.clone(),
         subagent_id: child.request.id.clone(),
         description: child.request.description.clone(),
         subagent_type: child.request.subagent_type.clone(),
@@ -1298,59 +1336,6 @@ pub(super) fn running_seed<C>(child: &ActiveChild<C>) -> RunningSeed {
     }
 }
 
-fn resident_inspection(
-    snapshot: SubagentSnapshot,
-    parent_session_id: String,
-    child_session_id: String,
-    fork_parent_prompt_id: Option<String>,
-    resumed_from: Option<String>,
-) -> SubagentInspection {
-    SubagentInspection {
-        subagent_id: snapshot.subagent_id,
-        description: snapshot.description,
-        subagent_type: snapshot.subagent_type,
-        started_at_epoch_ms: snapshot.started_at_epoch_ms,
-        persona: snapshot.persona,
-        parent_session_id,
-        child_session_id,
-        fork_parent_prompt_id,
-        resumed_from,
-        observation: ChildObservation::Resident {
-            status: snapshot.status,
-            duration_ms: snapshot.duration_ms,
-        },
-    }
-}
-
-pub(super) fn running_inspection(
-    seed: RunningSeed,
-    progress: SubagentProgress,
-) -> SubagentInspection {
-    resident_inspection(
-        SubagentSnapshot {
-            subagent_id: seed.subagent_id,
-            description: seed.description,
-            subagent_type: seed.subagent_type,
-            status: SubagentSnapshotStatus::Running {
-                turn_count: progress.turn_count,
-                tool_call_count: progress.tool_call_count,
-                tokens_used: progress.tokens_used,
-                context_window_tokens: progress.context_window_tokens,
-                context_usage_pct: progress.context_usage_pct,
-                tools_used: progress.tools_used,
-                error_count: progress.error_count,
-            },
-            started_at_epoch_ms: seed.started_at_epoch_ms,
-            duration_ms: seed.duration_ms,
-            persona: seed.persona,
-        },
-        seed.parent_session_id,
-        seed.child_session_id,
-        seed.fork_parent_prompt_id,
-        seed.resumed_from,
-    )
-}
-
 pub(super) fn pending_snapshot(child: &PendingChild) -> SubagentSnapshot {
     SubagentSnapshot {
         subagent_id: child.request.id.clone(),
@@ -1361,16 +1346,6 @@ pub(super) fn pending_snapshot(child: &PendingChild) -> SubagentSnapshot {
         duration_ms: child.started_at.elapsed().as_millis() as u64,
         persona: child.request.runtime_overrides.persona.clone(),
     }
-}
-
-pub(super) fn pending_inspection(child: &PendingChild) -> SubagentInspection {
-    resident_inspection(
-        pending_snapshot(child),
-        child.request.parent_session_id.clone(),
-        String::new(),
-        child.request.parent_prompt_id.clone(),
-        child.request.resume_from.clone(),
-    )
 }
 
 /// A spawn parked at the session's concurrent limit reads as initializing
@@ -1390,19 +1365,6 @@ pub(super) fn queued_snapshot(
         duration_ms: queued_at.elapsed().as_millis() as u64,
         persona: request.runtime_overrides.persona.clone(),
     }
-}
-
-pub(super) fn queued_inspection(
-    request: &SubagentRequest,
-    queued_at: std::time::Instant,
-) -> SubagentInspection {
-    resident_inspection(
-        queued_snapshot(request, queued_at),
-        request.parent_session_id.clone(),
-        String::new(),
-        request.parent_prompt_id.clone(),
-        request.resume_from.clone(),
-    )
 }
 
 /// `persona` must be the resolved one; the tool and the notices render this same snapshot.
@@ -1452,7 +1414,7 @@ pub(super) fn completed_snapshot(
         &child.result,
         persisted_output,
         child.persona.clone(),
-        instant_to_epoch_ms(child.started_at),
+        instant_to_epoch_ms(child.origin.since()),
     );
     snapshot.status = match &child.publication {
         TerminalPublicationState::Committing => SubagentSnapshotStatus::Finalizing {
@@ -1471,59 +1433,6 @@ pub(super) fn completed_snapshot(
         }
     };
     snapshot
-}
-
-fn completed_terminal(
-    child: &CompletedChild,
-    persisted_output: Option<&str>,
-) -> Option<super::terminal::SubagentTerminal> {
-    if child.persisted_output_ref.is_some() && persisted_output.is_none() {
-        return None;
-    }
-    match &child.publication {
-        TerminalPublicationState::Publishing | TerminalPublicationState::Published => {
-            super::terminal::SubagentTerminal::from_result(
-                &child.attempt_id, &child.result, persisted_output,
-            )
-        }
-        TerminalPublicationState::Committing
-        | TerminalPublicationState::Rejected { .. }
-        | TerminalPublicationState::HistoryBlocked { .. } => None,
-    }
-}
-
-pub(super) fn completed_resident_inspection(
-    child: &CompletedChild,
-    persisted_output: Option<&str>,
-) -> SubagentInspection {
-    resident_inspection(
-        completed_snapshot(child, persisted_output),
-        child.request.parent_session_id.clone(),
-        child.child_session_id.clone(),
-        child.request.parent_prompt_id.clone(),
-        child.resumed_from.clone(),
-    )
-}
-
-pub(super) fn completed_inspection(
-    child: &CompletedChild,
-    persisted_output: Option<&str>,
-) -> SubagentInspection {
-    match completed_terminal(child, persisted_output) {
-        Some(terminal) => SubagentInspection {
-            subagent_id: child.request.id.clone(),
-            description: child.request.description.clone(),
-            subagent_type: child.request.subagent_type.clone(),
-            started_at_epoch_ms: instant_to_epoch_ms(child.started_at),
-            persona: child.persona.clone(),
-            parent_session_id: child.request.parent_session_id.clone(),
-            child_session_id: child.child_session_id.clone(),
-            fork_parent_prompt_id: child.request.parent_prompt_id.clone(),
-            resumed_from: child.resumed_from.clone(),
-            observation: ChildObservation::Terminal(terminal),
-        },
-        None => completed_resident_inspection(child, persisted_output),
-    }
 }
 
 /// No marker here: the notice renders the cut from `full_output_bytes`.

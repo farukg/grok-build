@@ -29,6 +29,15 @@ use xai_tool_types::{
 pub use xai_tool_types::{InterruptionCause, SubagentActor, SubagentState};
 
 use crate::register_resource;
+use xai_chat_state::source_version::SourceVersion;
+use super::inventory::{
+    AttemptEvidence, ChildCancelSelector, ChildEvidenceSource, ChildIdentity,
+    ChildInventoryImport, ChildInventoryReply, ChildInventorySnapshot, HistoricalChildPhase,
+    InventoryCancelProof, InventoryIssue, InventoryValidationError, RecordedSubagentOwner,
+    RecordedSubagentSpawner, ResidentChildTarget, validate_id, validate_owner,
+    validate_sources, validate_spawner,
+};
+use super::terminal::ChildTerminalEvidence;
 
 pub use super::active_message::{
     ActiveAgentMessage, ActiveAgentMessageClaim, ActiveAgentMessageCommittedAdmission,
@@ -111,6 +120,7 @@ pub struct SubagentRequest {
     pub spawn_root: SpawnRootSpan,
     /// Model tool call that issued this spawn; `None` for harness-internal spawns.
     pub tool_call_id: Option<String>,
+    pub recorded_spawner: Option<RecordedSubagentSpawner>,
 }
 
 #[derive(Debug, Default)]
@@ -619,9 +629,9 @@ pub struct SubagentQueryRequest {
     pub block: bool,
     /// Max wait time in ms when blocking. Default 30s.
     pub timeout_ms: Option<u64>,
-    /// Oneshot for the coordinator to send back the snapshot.
+    /// Attempt-bound inventory observation or a confirmed miss.
     #[educe(Debug(ignore))]
-    pub respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
+    pub respond_to: oneshot::Sender<ChildInventoryReply>,
 }
 
 #[derive(Educe)]
@@ -649,112 +659,126 @@ pub struct SubagentSnapshot {
 }
 
 /// Lifecycle metadata returned to shell presentation and extension callers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubagentInspection {
     pub subagent_id: String,
-    pub description: String,
-    pub subagent_type: String,
-    pub started_at_epoch_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_epoch_ms: Option<u64>,
     pub persona: Option<String>,
     pub parent_session_id: String,
-    pub child_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_session_id: Option<String>,
     pub fork_parent_prompt_id: Option<String>,
     pub resumed_from: Option<String>,
+    pub attempt: AttemptEvidence,
+    #[serde(default)]
+    pub recorded_owner: Option<RecordedSubagentOwner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_spawner: Option<RecordedSubagentSpawner>,
     pub observation: ChildObservation,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum ChildObservation {
     /// An existing coordinator record with queue and publication custody, not necessarily running.
     Resident {
         status: SubagentSnapshotStatus,
         duration_ms: u64,
+        target: ResidentChildTarget,
     },
-    Terminal(super::terminal::SubagentTerminal),
-    Uncustodied,
+    Terminal { terminal: ChildTerminalEvidence },
+    IdentityOnly { attempt: AttemptEvidence, sources: Vec<ChildEvidenceSource> },
+    Uncustodied {
+        attempt: AttemptEvidence,
+        last: HistoricalChildPhase,
+        sources: Vec<ChildEvidenceSource>,
+    },
 }
 
 impl ChildObservation {
-    pub fn state_duration(&self) -> Option<(SubagentState, u64)> {
-        use super::terminal::SubagentTerminalState;
+    pub fn state(&self) -> Option<SubagentState> {
         match self {
-            Self::Resident { status, duration_ms } => Some((status.state(), *duration_ms)),
-            Self::Terminal(terminal) => {
-                let state = match &terminal.state {
-                    SubagentTerminalState::Completed => SubagentState::Completed,
-                    SubagentTerminalState::Failed { message } => SubagentState::Failed {
-                        message: message.clone(),
-                    },
-                    SubagentTerminalState::Interrupted { cause } => SubagentState::Interrupted {
-                        cause: cause.clone(),
-                    },
-                };
-                Some((state, terminal.duration_ms))
-            }
-            Self::Uncustodied => None,
+            Self::Resident { status, .. } => Some(status.state()),
+            Self::Terminal { terminal } => terminal.state(),
+            Self::Uncustodied { .. } | Self::IdentityOnly { .. } => None,
+        }
+    }
+
+    pub fn duration_ms(&self) -> Option<u64> {
+        match self {
+            Self::Resident { duration_ms, .. } => Some(*duration_ms),
+            Self::Terminal { terminal } => terminal.duration_ms(),
+            Self::Uncustodied { .. } | Self::IdentityOnly { .. } => None,
+        }
+    }
+
+    fn snapshot_parts(&self) -> Option<(SubagentSnapshotStatus, u64)> {
+        match self {
+            Self::Resident { status, duration_ms, .. } => Some((status.clone(), *duration_ms)),
+            Self::Terminal { terminal } => Some((terminal.snapshot_status()?, terminal.duration_ms()?)),
+            Self::Uncustodied { .. } | Self::IdentityOnly { .. } => None,
         }
     }
 
     fn into_snapshot_parts(self) -> Option<(SubagentSnapshotStatus, u64)> {
         match self {
-            Self::Resident { status, duration_ms } => Some((status, duration_ms)),
-            Self::Terminal(terminal) => Some((
-                terminal_snapshot_status(
-                    terminal.state,
-                    &terminal.output,
-                    terminal.tool_calls,
-                    terminal.turns,
-                ),
-                terminal.duration_ms,
-            )),
-            Self::Uncustodied => None,
+            Self::Resident { status, duration_ms, .. } => Some((status, duration_ms)),
+            Self::Terminal { terminal } => Some((terminal.snapshot_status()?, terminal.duration_ms()?)),
+            Self::Uncustodied { .. } | Self::IdentityOnly { .. } => None,
         }
     }
 }
 
-fn terminal_snapshot_status(
-    state: super::terminal::SubagentTerminalState,
-    output: &str,
-    tool_calls: u32,
-    turns: u32,
-) -> SubagentSnapshotStatus {
-    use super::terminal::SubagentTerminalState;
-    match state {
-        SubagentTerminalState::Completed => SubagentSnapshotStatus::Completed {
-            output: output.to_owned(),
-            tool_calls,
-            turns,
-            worktree_path: None,
-        },
-        SubagentTerminalState::Failed { message } => SubagentSnapshotStatus::Failed {
-            error: message,
-        },
-        SubagentTerminalState::Interrupted { cause } => SubagentSnapshotStatus::Cancelled {
-            cause,
-        },
-    }
-}
-
 impl SubagentInspection {
+    pub fn identity(&self) -> ChildIdentity {
+        ChildIdentity {
+            subagent_id: self.subagent_id.clone(),
+            parent_session_id: self.parent_session_id.clone(),
+            child_session_id: self.child_session_id.clone(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), InventoryValidationError> {
+        validate_id(&self.subagent_id)?;
+        validate_id(&self.parent_session_id)?;
+        if let Some(id) = &self.child_session_id {
+            validate_id(id)?;
+        }
+        validate_owner(self.recorded_owner.as_ref())?;
+        validate_spawner(self.recorded_spawner.as_ref())?;
+        match &self.observation {
+            ChildObservation::Resident { target, .. } => {
+                target.validate()?;
+                if target.attempt != self.attempt {
+                    return Err(InventoryValidationError::AttemptMismatch);
+                }
+            }
+            ChildObservation::Terminal { terminal } => terminal.validate(&self.subagent_id, &self.attempt)?,
+            ChildObservation::Uncustodied { attempt, sources, .. }
+            | ChildObservation::IdentityOnly { attempt, sources } => {
+                if attempt != &self.attempt {
+                    return Err(InventoryValidationError::AttemptMismatch);
+                }
+                validate_sources(sources, &self.subagent_id, attempt)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn snapshot(&self) -> Option<SubagentSnapshot> {
-        let (status, duration_ms) = match &self.observation {
-            ChildObservation::Resident { status, duration_ms } => (status.clone(), *duration_ms),
-            ChildObservation::Terminal(terminal) => (
-                terminal_snapshot_status(
-                    terminal.state.clone(),
-                    &terminal.output,
-                    terminal.tool_calls,
-                    terminal.turns,
-                ),
-                terminal.duration_ms,
-            ),
-            ChildObservation::Uncustodied => return None,
-        };
+        let started_at_epoch_ms = self.started_at_epoch_ms?;
+        let (status, duration_ms) = self.observation.snapshot_parts()?;
         Some(SubagentSnapshot {
             subagent_id: self.subagent_id.clone(),
-            description: self.description.clone(),
-            subagent_type: self.subagent_type.clone(),
-            started_at_epoch_ms: self.started_at_epoch_ms,
+            description: self.description.clone()?,
+            subagent_type: self.subagent_type.clone()?,
+            started_at_epoch_ms,
             persona: self.persona.clone(),
             status,
             duration_ms,
@@ -762,12 +786,13 @@ impl SubagentInspection {
     }
 
     pub fn into_snapshot(self) -> Option<SubagentSnapshot> {
+        let started_at_epoch_ms = self.started_at_epoch_ms?;
         let (status, duration_ms) = self.observation.into_snapshot_parts()?;
         Some(SubagentSnapshot {
             subagent_id: self.subagent_id,
-            description: self.description,
-            subagent_type: self.subagent_type,
-            started_at_epoch_ms: self.started_at_epoch_ms,
+            description: self.description?,
+            subagent_type: self.subagent_type?,
+            started_at_epoch_ms,
             persona: self.persona,
             status,
             duration_ms,
@@ -789,13 +814,17 @@ impl SubagentSnapshot {
 }
 
 /// Status of a subagent snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SubagentFinalization {
+    Settling,
     Writing,
+    Publishing,
     Blocked { error: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum SubagentSnapshotStatus {
     Finalizing {
         publication: SubagentFinalization,
@@ -877,13 +906,60 @@ pub enum ChildCancellation {
 pub enum SubagentCancelBinding {
     #[default]
     Current,
-    Observed { attempt_id: Option<String> },
+    Observed {
+        #[serde(default)]
+        attempt_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        proof: Option<InventoryCancelProof>,
+    },
+}
+
+impl SubagentCancelBinding {
+    pub fn selector(&self, subagent_id: &str) -> Result<ChildCancelSelector, InventoryValidationError> {
+        match self {
+            Self::Current => Ok(ChildCancelSelector::Current),
+            Self::Observed { attempt_id, proof } => {
+                let attempt = AttemptEvidence::from_recorded(attempt_id.as_deref())?;
+                match proof {
+                    Some(proof) => {
+                        proof.validate(subagent_id)?;
+                        match proof.target.attempt() {
+                            AttemptEvidence::NotStarted => {
+                                if attempt_id.is_some() {
+                                    return Err(InventoryValidationError::AttemptMismatch);
+                                }
+                            }
+                            AttemptEvidence::Known(_) | AttemptEvidence::Legacy => {
+                                if proof.target.attempt() != &attempt {
+                                    return Err(InventoryValidationError::AttemptMismatch);
+                                }
+                            }
+                        }
+                        Ok(ChildCancelSelector::Bound(proof.clone()))
+                    }
+                    None => Ok(ChildCancelSelector::UnconfirmedObservation { attempt }),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SubagentAccessError {
     #[error("Subagent request not confirmed: coordinator unavailable or response lost")]
     CoordinatorUnavailable,
+    #[error("Parent session is not bound to this backend")]
+    ParentSessionUnavailable,
+    #[error("Child inventory could not be read completely")]
+    InventoryUnreadable { issues: Vec<InventoryIssue> },
+    #[error("Child inventory import was superseded")]
+    InventorySuperseded,
+    #[error("Child inventory scope is being released")]
+    InventoryReleasing,
+    #[error("Child inventory changed while the response was being captured")]
+    InventoryChanged,
+    #[error("Invalid child inventory evidence: {reason}")]
+    InvalidInventory { reason: InventoryValidationError },
 }
 
 #[derive(Debug, Clone)]
@@ -896,8 +972,6 @@ pub enum SubagentCancelTarget {
     },
     /// Turn-scoped cancel (soft cancel / max-turns).
     ParentPromptId(String),
-    /// Session-scoped cancellation, including prior-turn background children.
-    ParentSession(ChildCancellation),
     WorkflowRunId(String),
 }
 
@@ -928,16 +1002,19 @@ pub struct SubagentCancelRequest {
     pub parent_session_id: Option<String>,
     pub target: SubagentCancelTarget,
     #[educe(Debug(ignore))]
-    pub respond_to: oneshot::Sender<SubagentCancelOutcome>,
+    pub respond_to: oneshot::Sender<Result<SubagentCancelOutcome, SubagentAccessError>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum SubagentCancelOutcome {
     Cancelled { cause: InterruptionCause },
-    AlreadyFinished { state: SubagentState },
+    AlreadyFinished { terminal: ChildTerminalEvidence },
     NotFound,
     CustodyUnavailable { target_id: String },
+    ControlOwnerUnavailable { target_id: String },
+    WorkflowOwned { target_id: String, run_id: String },
+    TargetChanged { target_id: String },
 }
 
 /// Summary of a finished subagent, used for between-turn delivery and the auto-wake prompt.
@@ -1057,7 +1134,7 @@ pub struct SubagentInspectRequest {
     pub subagent_id: String,
     pub parent_session_id: Option<String>,
     #[educe(Debug(ignore))]
-    pub respond_to: oneshot::Sender<Option<SubagentInspection>>,
+    pub respond_to: oneshot::Sender<ChildInventoryReply>,
 }
 
 /// Request for all running children owned by one parent session.
@@ -1066,7 +1143,7 @@ pub struct SubagentInspectRequest {
 pub struct SubagentListRunningRequest {
     pub parent_session_id: String,
     #[educe(Debug(ignore))]
-    pub respond_to: oneshot::Sender<Vec<SubagentInspection>>,
+    pub respond_to: oneshot::Sender<Result<Vec<SubagentInspection>, SubagentAccessError>>,
 }
 
 /// Request for every subagent a session can reach: queued, starting, running and retained finished ones.
@@ -1075,7 +1152,7 @@ pub struct SubagentListRunningRequest {
 pub struct SubagentListOwnedRequest {
     pub parent_session_id: Option<String>,
     #[educe(Debug(ignore))]
-    pub respond_to: oneshot::Sender<Vec<SubagentInspection>>,
+    pub respond_to: oneshot::Sender<Result<Vec<super::inventory::ChildInventoryEntry>, SubagentAccessError>>,
 }
 
 /// Fork/resume provenance retained by the shared coordinator.
@@ -1235,8 +1312,32 @@ pub struct SubagentDescribeRequest {
     pub respond_to: oneshot::Sender<SubagentDescribeOutcome>,
 }
 
+/// Submission revocation is confirmed; producer completion is not implied.
+#[derive(Debug, Clone)]
+pub struct ParentSessionRevocation {
+    pub parent_session_id: String,
+    pub completions: Vec<xai_message_delivery_core::SubagentCompletionId>,
+}
+
 /// Coordinator message enum. Kept exhaustive so every actor command is handled.
 pub enum SubagentEvent {
+    RevokeParentSession {
+        parent_session_id: String,
+        intent: ChildCancellation,
+        respond_to: oneshot::Sender<Result<ParentSessionRevocation, SubagentAccessError>>,
+    },
+    BeginInventory {
+        parent_session_id: String,
+        respond_to: oneshot::Sender<Result<SourceVersion, SubagentAccessError>>,
+    },
+    ImportInventory {
+        batch: ChildInventoryImport,
+        respond_to: oneshot::Sender<Result<ChildInventorySnapshot, SubagentAccessError>>,
+    },
+    Inventory {
+        parent_session_id: String,
+        respond_to: oneshot::Sender<Result<ChildInventorySnapshot, SubagentAccessError>>,
+    },
     ReserveChildSubmission {
         parent_session_id: String,
         child_session_id: String,

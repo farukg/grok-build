@@ -157,6 +157,7 @@ pub(crate) enum CompletionAdmission {
     Pending,
     Projected(CompletionReceipt),
     Settled,
+    Suppressed(CompletionSuppression),
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -167,6 +168,7 @@ pub enum CompletionSuppression {
     /// window, so recoverable obligations are cancelled at startup instead of
     /// being woken by the next session load.
     StaleRestart,
+    HumanStopped,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -211,7 +213,7 @@ impl CompletionObligation {
             }
             | Self::Projected { receipt, .. } => Some(receipt),
             Self::Preparing {
-                admission: CompletionAdmission::Pending | CompletionAdmission::Settled,
+                admission: CompletionAdmission::Pending | CompletionAdmission::Settled | CompletionAdmission::Suppressed(_),
                 ..
             }
             | Self::Pending { .. } | Self::Suppressed { .. } => None,
@@ -228,6 +230,8 @@ pub struct CompletionDeliveryState {
     #[serde(default)]
     pub(crate) wake_policy: CompletionWakePolicy,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) stopped_workflow_episodes: Vec<super::workflow::tracker::WorkflowEpisodeId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) obligations: Vec<CompletionObligation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) receipts: Vec<CompletionReceipt>,
@@ -240,6 +244,10 @@ enum ProjectionBinding {
 }
 
 impl CompletionDeliveryState {
+    pub(crate) fn workflow_episode_stopped(&self, episode: &super::workflow::tracker::WorkflowEpisodeId) -> bool {
+        self.stopped_workflow_episodes.contains(episode)
+    }
+
     fn record_projection(&mut self, receipt: &CompletionReceipt, binding: ProjectionBinding) {
         if !self
             .receipts
@@ -256,7 +264,7 @@ impl CompletionDeliveryState {
             return;
         };
         match obligation {
-            CompletionObligation::Suppressed { reason: CompletionSuppression::StaleRestart, .. } => {},
+            CompletionObligation::Suppressed { reason: CompletionSuppression::StaleRestart | CompletionSuppression::HumanStopped, .. } => {},
             CompletionObligation::Suppressed { reason: CompletionSuppression::GoalNotificationPolicy, source, .. } => match source {
                 SuppressedCompletionSource::AwaitingEnrollment => {}
                 SuppressedCompletionSource::Enrolled(payload) => {
@@ -271,7 +279,7 @@ impl CompletionDeliveryState {
                     ProjectionBinding::CurrentTurn => *existing = receipt.clone(),
                     ProjectionBinding::Historical => {}
                 },
-                CompletionAdmission::Settled => {}
+                CompletionAdmission::Settled | CompletionAdmission::Suppressed(_) => {}
             },
             CompletionObligation::Pending { payload, .. } => {
                 *obligation = CompletionObligation::Projected {
@@ -307,24 +315,100 @@ impl CompletionDeliveryState {
         }
     }
 
+    pub(crate) fn is_suppressed(&self, id: &CompletionIdentity) -> bool {
+        self.obligations.iter().any(|obligation| {
+            obligation.id() == *id && matches!(obligation,
+                CompletionObligation::Suppressed { .. }
+                | CompletionObligation::Preparing { admission: CompletionAdmission::Suppressed(_), .. })
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.restart_admission == xai_grok_tools::types::restart_recovery::RestartAdmission::Unaffected
             && self.receiver.records.is_empty()
             && self.obligations.is_empty()
             && self.receipts.is_empty()
+            && self.stopped_workflow_episodes.is_empty()
             && self.wake_policy == CompletionWakePolicy::Automatic
     }
     pub(crate) fn apply(&mut self, mutation: &CompletionMutation) {
         match mutation {
-            CompletionMutation::WakePolicy(policy) => self.wake_policy = *policy,
+            CompletionMutation::HumanStop { ids, workflow_episodes } => {
+                for episode in workflow_episodes {
+                    if !self.stopped_workflow_episodes.contains(episode) {
+                        self.stopped_workflow_episodes.push(episode.clone());
+                    }
+                }
+                self.apply(&CompletionMutation::WakePolicy(CompletionWakePolicy::HumanStopped));
+                self.apply(&CompletionMutation::Suppress {
+                    ids: ids.clone(), reason: CompletionSuppression::HumanStopped,
+                });
+            }
+            CompletionMutation::WakePolicy(policy) => {
+                self.wake_policy = *policy;
+                match policy {
+                    CompletionWakePolicy::Automatic => {}
+                    CompletionWakePolicy::HumanStopped => {
+                        for obligation in &mut self.obligations {
+                            match obligation {
+                                CompletionObligation::Preparing { admission, .. } => match admission {
+                                    CompletionAdmission::Suppressed(CompletionSuppression::StaleRestart | CompletionSuppression::HumanStopped) => {}
+                                    CompletionAdmission::Pending | CompletionAdmission::Projected(_)
+                                    | CompletionAdmission::Settled | CompletionAdmission::Suppressed(CompletionSuppression::GoalNotificationPolicy) => {
+                                        *admission = CompletionAdmission::Suppressed(CompletionSuppression::HumanStopped);
+                                    }
+                                },
+                                CompletionObligation::Pending { id, payload } => {
+                                    *obligation = CompletionObligation::Suppressed {
+                                        id: id.clone(), reason: CompletionSuppression::HumanStopped,
+                                        source: SuppressedCompletionSource::Enrolled(payload.clone()),
+                                    };
+                                }
+                                CompletionObligation::Projected { receipt, payload } => {
+                                    *obligation = CompletionObligation::Suppressed {
+                                        id: receipt.completion.clone(), reason: CompletionSuppression::HumanStopped,
+                                        source: SuppressedCompletionSource::Enrolled(payload.clone()),
+                                    };
+                                }
+                                CompletionObligation::Suppressed { reason, .. } => match reason {
+                                    CompletionSuppression::GoalNotificationPolicy => *reason = CompletionSuppression::HumanStopped,
+                                    CompletionSuppression::StaleRestart | CompletionSuppression::HumanStopped => {}
+                                }
+                            }
+                        }
+                        use super::delivery_receiver::DeliveryExecution;
+                        for record in self.receiver.records.values_mut() {
+                            match record.execution {
+                                DeliveryExecution::Queued { .. } | DeliveryExecution::Processing { .. }
+                                | DeliveryExecution::Interrupted { .. } => {
+                                    record.execution = DeliveryExecution::Cancelled { reason: "explicit human Stop".into() };
+                                    record.revision = record.revision.saturating_add(1).max(4);
+                                }
+                                DeliveryExecution::Succeeded | DeliveryExecution::Failed { .. }
+                                | DeliveryExecution::Cancelled { .. } => {}
+                            }
+                        }
+                    }
+                }
+            },
             CompletionMutation::Suppress { ids, reason } => {
                 for id in ids {
+                    if self.obligations.iter().any(|obligation| obligation.id() == *id && matches!(obligation,
+                        CompletionObligation::Suppressed { reason: CompletionSuppression::HumanStopped | CompletionSuppression::StaleRestart, .. }
+                        | CompletionObligation::Preparing { admission: CompletionAdmission::Suppressed(CompletionSuppression::HumanStopped | CompletionSuppression::StaleRestart), .. }
+                    )) {
+                        continue;
+                    }
                     match reason {
                         CompletionSuppression::GoalNotificationPolicy => {
                             if self.receipts.iter().any(|receipt| receipt.completion == *id)
                                 || self.obligations.iter().any(|obligation| obligation.id() == *id && obligation.receipt().is_some()) { continue; }
                         }
-                        CompletionSuppression::StaleRestart => {},
+                        CompletionSuppression::StaleRestart | CompletionSuppression::HumanStopped => {},
+                    }
+                    if let Some(CompletionObligation::Preparing { admission, .. }) = self.obligations.iter_mut().find(|obligation| obligation.id() == *id) {
+                        *admission = CompletionAdmission::Suppressed(*reason);
+                        continue;
                     }
                     let source = self.obligations.iter().find_map(|obligation| {
                         if obligation.id() != *id { return None; }
@@ -340,9 +424,20 @@ impl CompletionDeliveryState {
                 }
             }
             CompletionMutation::Enrolled { id, payload } => {
+                let episode_stopped = match &payload.source {
+                    CompletionPayloadSource::Workflow(run) => {
+                        self.workflow_episode_stopped(&run.episode())
+                    }
+                    CompletionPayloadSource::Legacy | CompletionPayloadSource::Task(_) => false,
+                };
+                if self.wake_policy == CompletionWakePolicy::HumanStopped || episode_stopped {
+                    self.apply(&CompletionMutation::Suppress {
+                        ids: vec![id.clone()], reason: CompletionSuppression::HumanStopped,
+                    });
+                }
                 let observed = self.receipts.iter().find(|receipt| receipt.completion == *id).cloned();
                 if let Some(obligation @ CompletionObligation::Suppressed { .. }) = self.obligations.iter_mut().find(|obligation| obligation.id() == *id) {
-                    if let CompletionObligation::Suppressed { reason: CompletionSuppression::StaleRestart, source, .. } = obligation {
+                    if let CompletionObligation::Suppressed { reason: CompletionSuppression::StaleRestart | CompletionSuppression::HumanStopped, source, .. } = obligation {
                         if matches!(source, SuppressedCompletionSource::AwaitingEnrollment) {
                             *source = SuppressedCompletionSource::Enrolled(payload.clone());
                         }
@@ -367,10 +462,22 @@ impl CompletionDeliveryState {
                 }
             }
             CompletionMutation::Ready(event) => {
+                if let Some(obligation) = self.obligations.iter_mut().find(|o| o.id() == event.id) {
+                    if let CompletionObligation::Suppressed {
+                        reason, source: SuppressedCompletionSource::AwaitingEnrollment, ..
+                    } = obligation {
+                        *obligation = CompletionObligation::Preparing {
+                            event: event.clone(), admission: CompletionAdmission::Suppressed(*reason),
+                        };
+                    }
+                }
                 if !self.obligations.iter().any(|o| o.id() == event.id) {
-                    let admission = match self.receipts.iter().find(|r| r.completion == event.id) {
-                        Some(_) => CompletionAdmission::Settled,
-                        None => CompletionAdmission::Pending,
+                    let admission = match self.wake_policy {
+                        CompletionWakePolicy::HumanStopped => CompletionAdmission::Suppressed(CompletionSuppression::HumanStopped),
+                        CompletionWakePolicy::Automatic => match self.receipts.iter().find(|r| r.completion == event.id) {
+                            Some(_) => CompletionAdmission::Settled,
+                            None => CompletionAdmission::Pending,
+                        },
                     };
                     self.obligations.push(CompletionObligation::Preparing {
                         event: event.clone(),
@@ -412,6 +519,14 @@ impl CompletionDeliveryState {
                                         })
                                     }
                                     CompletionAdmission::Settled => None,
+                                    CompletionAdmission::Suppressed(reason) => Some(CompletionObligation::Suppressed {
+                                        id: event.id.clone().into(), reason: *reason,
+                                        source: SuppressedCompletionSource::Enrolled(CompletionPayload {
+                                            source: CompletionPayloadSource::Legacy,
+                                            text: event.text.clone(), policy: event.policy,
+                                            reference: Some(reference.clone()),
+                                        }),
+                                    }),
                                 },
                             }
                         }
@@ -457,6 +572,10 @@ impl CompletionDeliveryState {
 #[derive(Clone, Debug)]
 pub(crate) enum CompletionMutation {
     WakePolicy(CompletionWakePolicy),
+    HumanStop {
+        ids: Vec<CompletionIdentity>,
+        workflow_episodes: Vec<super::workflow::tracker::WorkflowEpisodeId>,
+    },
     Suppress { ids: Vec<CompletionIdentity>, reason: CompletionSuppression },
     Enrolled { id: CompletionIdentity, payload: CompletionPayload },
     Ready(SubagentCompletionEvent),

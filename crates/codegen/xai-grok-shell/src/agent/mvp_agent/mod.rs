@@ -256,6 +256,7 @@ pub(crate) struct SessionSpawnOptions<'a> {
     /// Sticky chat product kind for ACU / product skills sourcing.
     pub is_chat_kind: bool,
     pub prefetch: Option<crate::session::session_create_prefetch::SessionCreatePrefetch>,
+    pub completion_wake_policy: crate::session::completion_delivery::CompletionWakePolicy,
 }
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -371,6 +372,7 @@ pub(crate) fn chat_session_spawn_options<'a>(
         initial_client_mcp_servers: Vec::new(),
         mcp_meta_config_map: Default::default(),
         persistence: crate::session::persistence::PersistenceHandle::noop(),
+        completion_wake_policy: crate::session::completion_delivery::CompletionWakePolicy::Automatic,
         root_identity: None,
         attach_waiter: None,
         chat_history: Vec::new(),

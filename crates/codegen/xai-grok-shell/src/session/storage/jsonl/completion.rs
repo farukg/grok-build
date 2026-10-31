@@ -212,7 +212,8 @@ impl JsonlStorageAdapter {
                 || Self::completion_receipts(&storage.chat_file(&info))?
                     .iter()
                     .any(|r| r.completion == event.id);
-            let offer = if projected {
+            let suppressed = summary.completion_delivery.is_suppressed(&event.id.clone().into());
+            let offer = if projected || suppressed {
                 crate::session::completion_delivery::CompletionOffer::None
             } else {
                 crate::session::completion_delivery::CompletionOffer::pending(event.policy)
@@ -267,7 +268,7 @@ impl JsonlStorageAdapter {
                         })?,
                         None => 0,
                     };
-                    let will_wake = will_wake && !projected;
+                    let will_wake = will_wake && !projected && !suppressed;
                     let notification =
                         crate::agent::subagent::completion_lifecycle_notification_from_event(
                             &event,
@@ -475,8 +476,7 @@ impl JsonlStorageAdapter {
             Self::read_completion_projections(&path).map_err(StrictAppendError::NotCommitted)?;
         let receipts = Self::projection_receipts(&retained_projections);
         if matches!(projection.item, ConversationItem::User(_)) && projection.receipts().any(|receipt| {
-            summary.completion_delivery.obligations.iter().any(|obligation| matches!(obligation,
-                crate::session::completion_delivery::CompletionObligation::Suppressed { id, .. } if id == &receipt.completion))
+            summary.completion_delivery.is_suppressed(&receipt.completion)
         }) {
             return Err(StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::PermissionDenied, "completion notification has a durable suppression disposition")));
         }
@@ -649,6 +649,7 @@ impl JsonlStorageAdapter {
             )
             .map_err(|error| match error {
                 AppendLineError::NotCommitted(source) => StrictAppendError::NotCommitted(source),
+                AppendLineError::Indeterminate(source) => StrictAppendError::Indeterminate(source),
                 AppendLineError::Committed(source) => StrictAppendError::Committed {
                     acknowledgement: CompletionProjectionAck::Appended,
                     source,
@@ -781,6 +782,7 @@ impl JsonlStorageAdapter {
         tokio::task::spawn_blocking(move || {
             let path = storage.chat_file(&info);
             let _lock = Self::lock_append(&path)?;
+            let interjections = Self::retained_interjections(&path)?;
             let receipts = Self::completion_receipts(&path)?;
             if !receipts.is_empty() {
                 apply_patch_locked(
@@ -792,7 +794,7 @@ impl JsonlStorageAdapter {
                     },
                 )?;
             }
-            crate::session::storage::write_jsonl_atomic(&path, &items)
+            Self::rewrite_with_interjections(&path, &items, &interjections)
         })
         .await
         .map_err(io::Error::other)?

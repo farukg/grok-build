@@ -1,6 +1,6 @@
 //! Spawns parked at the session concurrent limit, and their dequeue path.
 
-use std::collections::VecDeque;
+use indexmap::IndexMap;
 
 use xai_tool_types::InterruptionCause;
 
@@ -17,7 +17,7 @@ pub(super) const QUEUED_REAP_INTERVAL: std::time::Duration = std::time::Duration
 /// arrival order. Every queue convention lives behind these methods.
 #[derive(Default)]
 pub(super) struct SpawnQueue {
-    entries: VecDeque<QueuedSpawn>,
+    entries: IndexMap<String, QueuedSpawn>,
 }
 
 impl SpawnQueue {
@@ -30,31 +30,35 @@ impl SpawnQueue {
     }
 
     pub(super) fn push_back(&mut self, entry: QueuedSpawn) {
-        self.entries.push_back(entry);
+        self.entries.insert(entry.request.id.clone(), entry);
     }
 
     #[cfg(test)]
     pub(super) fn pop_front(&mut self) -> Option<QueuedSpawn> {
-        self.entries.pop_front()
+        self.entries.shift_remove_index(0).map(|(_, entry)| entry)
     }
 
     pub(super) fn contains_id(&self, id: &str) -> bool {
-        self.entries.iter().any(|queued| queued.request.id == id)
+        self.entries.contains_key(id)
+    }
+
+    pub(super) fn get(&self, id: &str) -> Option<&QueuedSpawn> {
+        self.entries.get(id)
     }
 
     pub(super) fn count_for_session(&self, parent_session_id: &str) -> usize {
         self.entries
-            .iter()
+            .values()
             .filter(|queued| queued.request.parent_session_id == parent_session_id)
             .count()
     }
 
-    pub(super) fn iter(&self) -> std::collections::vec_deque::Iter<'_, QueuedSpawn> {
-        self.entries.iter()
+    pub(super) fn iter(&self) -> indexmap::map::Values<'_, String, QueuedSpawn> {
+        self.entries.values()
     }
 
-    pub(super) fn iter_mut(&mut self) -> std::collections::vec_deque::IterMut<'_, QueuedSpawn> {
-        self.entries.iter_mut()
+    pub(super) fn iter_mut(&mut self) -> indexmap::map::ValuesMut<'_, String, QueuedSpawn> {
+        self.entries.values_mut()
     }
 }
 
@@ -67,6 +71,17 @@ pub(super) struct QueuedSpawn {
     pub(super) spawner_session_id: Option<String>,
     pub(super) wake_origin: Option<WakeOrigin>,
     pub(super) wake: Option<DisplacedCompletedChild>,
+}
+
+impl QueuedSpawn {
+    pub(super) fn attempt(&self) -> super::super::inventory::AttemptEvidence {
+        use super::super::inventory::AttemptEvidence;
+        use super::super::native_recovery::NativeWakeMode;
+        match self.wake_origin.as_ref().map(|origin| &origin.mode) {
+            Some(NativeWakeMode::Adopt { attempt_id, .. }) => AttemptEvidence::Known(attempt_id.clone()),
+            Some(NativeWakeMode::Admit) | None => AttemptEvidence::NotStarted,
+        }
+    }
 }
 
 pub(super) enum QueuedCaller {
@@ -122,8 +137,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         self.draining_queued = true;
         let mut cancelled = Vec::new();
-        let mut kept = VecDeque::new();
-        for queued in std::mem::take(&mut self.queued.entries) {
+        let mut kept = IndexMap::new();
+        for queued in std::mem::take(&mut self.queued.entries).into_values() {
             if queued.request.cancel_token.is_cancelled()
                 || queued.request.runtime_overrides.child_submission.is_revoked()
             {
@@ -163,7 +178,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     wake,
                 );
             } else {
-                kept.push_back(queued);
+                kept.insert(queued.request.id.clone(), queued);
             }
         }
         self.queued.entries = kept;
@@ -179,9 +194,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         mut matches: impl FnMut(&SubagentRequest) -> bool,
     ) -> usize {
         let (removed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.queued.entries)
-            .into_iter()
+            .into_values()
             .partition(|queued| matches(&queued.request));
-        self.queued.entries = kept.into();
+        self.queued.entries = kept.into_iter().map(|queued| (queued.request.id.clone(), queued)).collect();
         let count = removed.len();
         for queued in removed {
             let id = queued.request.id.clone();
@@ -221,7 +236,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     /// tokens without touching child records or the host runner — the host
     /// may already be tearing down when the actor future is dropped.
     pub(super) fn resolve_queued_at_drop(&mut self) {
-        for queued in std::mem::take(&mut self.queued.entries) {
+        for queued in std::mem::take(&mut self.queued.entries).into_values() {
             queued.request.cancel_token.cancel();
             if let Some(result_tx) = queued.caller.into_spawn_reply() {
                 let _ = result_tx.send(SubagentResult::interrupted(

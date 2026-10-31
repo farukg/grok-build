@@ -72,6 +72,18 @@ async fn actual_workflow_manager_holds_outcome_and_wake_until_manifest_enrollmen
                 manager.store.clone(),
             );
             manager.session_cmd_tx = session_tx;
+            let (children, mut requests) = mpsc::unbounded_channel();
+            manager.subagent_event_tx = children;
+            tokio::spawn(async move {
+                while let Some(request) = requests.recv().await {
+                    let xai_grok_tools::implementations::grok_build::task::types::SubagentEvent::Cancel(request) = request else {
+                        panic!("child-free workflow only requests its actual drain acknowledgement");
+                    };
+                    let _ = request.respond_to.send(Ok(
+                        xai_grok_tools::implementations::grok_build::task::types::SubagentCancelOutcome::NotFound,
+                    ));
+                }
+            });
         }
         let resolved = super::super::registry::resolve_inline("let meta = #{ name: \"ack-barrier\", description: \"real workflow outcome\" };\n#{ result: \"finished\" };".into()).unwrap();
         let (run_id, mut outcome) = manager
@@ -191,3 +203,26 @@ async fn actual_workflow_manager_holds_outcome_and_wake_until_manifest_enrollmen
 
 #[path = "restart_cancellation_tests.rs"]
 mod restart_cancellation;
+
+#[tokio::test]
+async fn stop_registry_retains_retiring_epoch_after_successor_takes_tracker_ownership() {
+    let (manager, tracker) = WorkflowManager::test_bundle();
+    let mut manager = manager.lock().await;
+    let first = tracker.lock().start_run(
+        "wf_custody".into(), "custody".into(), "objective".into(), Vec::new(), Some(10), None,
+    );
+    let (old_done, old_pending) = oneshot::channel();
+    manager.test_insert_active_run(first.run_id.clone(), old_pending);
+    assert!(manager.pause(&first.run_id));
+    let resumed = tracker.lock().resume_run(&first.run_id, None).unwrap();
+    let (new_done, new_pending) = oneshot::channel();
+    manager.test_insert_active_run(first.run_id.clone(), new_pending);
+    let authority = manager.registered_stop_authority();
+    assert!(authority.completions.is_empty());
+    assert_eq!(authority.episodes.len(), 2);
+    assert!(authority.episodes.contains(&first.episode()));
+    assert!(authority.episodes.contains(&resumed.episode()));
+    assert!(!old_done.is_closed());
+    assert!(!new_done.is_closed());
+    assert_eq!(tracker.lock().get(&first.run_id).unwrap().revision, resumed.revision);
+}

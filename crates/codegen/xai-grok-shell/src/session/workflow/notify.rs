@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "notify_authority_tests.rs"]
+mod authority_tests;
+
 use crate::extensions::notification::{
     SessionNotification as XaiSessionNotification, SessionUpdate as XaiSessionUpdate,
     WorkflowAgentInfo, WorkflowPhaseInfo,
@@ -5,10 +9,27 @@ use crate::extensions::notification::{
 use crate::session::persistence::PersistenceMsg;
 
 use super::store::WorkflowRunStore;
-use super::tracker::WorkflowRunState;
+use super::tracker::{WorkflowEpisodeId, WorkflowRunState};
+
+#[derive(Clone)]
+enum WorkflowPublicationScope {
+    Session,
+    Episode(WorkflowEpisodeId),
+}
+
+impl WorkflowPublicationScope {
+    fn accepts(&self, state: &WorkflowRunState) -> bool {
+        match self {
+            Self::Session => true,
+            Self::Episode(episode) => episode.run_id == state.run_id
+                && episode.execution_epoch == state.execution_epoch,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct WorkflowNotifySender {
+    scope: WorkflowPublicationScope,
     session_id: agent_client_protocol::SessionId,
     gateway: xai_acp_lib::AcpAgentGatewaySender,
     persistence_tx: tokio::sync::mpsc::UnboundedSender<PersistenceMsg>,
@@ -23,6 +44,7 @@ impl WorkflowNotifySender {
         store: WorkflowRunStore,
     ) -> Self {
         Self {
+            scope: WorkflowPublicationScope::Session,
             session_id,
             gateway,
             persistence_tx,
@@ -30,7 +52,14 @@ impl WorkflowNotifySender {
         }
     }
 
+    pub(crate) fn for_episode(&self, episode: WorkflowEpisodeId) -> Self {
+        Self { scope: WorkflowPublicationScope::Episode(episode), ..self.clone() }
+    }
+
     pub(crate) fn emit(&self, state: &WorkflowRunState, elapsed_ms: u64, active_agents: u32) {
+        if !self.scope.accepts(state) {
+            return;
+        }
         if state.status.is_completion_reportable() {
             self.emit_terminal(state.clone(), elapsed_ms, active_agents, true);
             return;
@@ -50,6 +79,9 @@ impl WorkflowNotifySender {
         elapsed_ms: u64,
         active_agents: u32,
     ) {
+        if !self.scope.accepts(state) {
+            return;
+        }
         if state.status.is_completion_reportable() {
             self.emit_terminal(state.clone(), elapsed_ms, active_agents, false);
             return;
@@ -70,6 +102,9 @@ impl WorkflowNotifySender {
         active_agents: u32,
         persist_update: bool,
     ) {
+        if !self.scope.accepts(state) {
+            return;
+        }
         self.dispatch(
             build_workflow_updated(state, elapsed_ms, active_agents),
             persist_update,

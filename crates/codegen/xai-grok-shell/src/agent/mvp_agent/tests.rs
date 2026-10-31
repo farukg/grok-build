@@ -3337,6 +3337,7 @@ mod list_running_heal_tests;
 mod process_scope_reclaim;
 mod roster_lane_tests;
 mod session_delivery_tests;
+mod session_install_tests;
 mod session_rename_tests;
 mod session_resume_close_tests;
 mod subagent_spawn_context_tests;
@@ -5320,7 +5321,7 @@ fn failed_identity_stamp_fails_the_cold_load_closed() {
         let (result, toolset) = tokio::join!(load, toolset);
         let error = result.expect_err("a stamp that did not land fails the attach");
         assert_eq!(
-            Some(serde_json::json!("session load was superseded")),
+            Some(serde_json::json!("session identity stamp failed")),
             error.data
         );
         assert!(!crate::session::persistence::FAIL_NEXT_STAMP.get());
@@ -5482,7 +5483,7 @@ fn stamp_rollback_leaves_an_overlapping_attach_binding_intact() {
         };
         let (failing_result, successor_toolset) = tokio::join!(failing, successor);
         assert_eq!(
-            Some(serde_json::json!("session load was superseded")),
+            Some(serde_json::json!("session identity stamp failed")),
             failing_result.expect_err("failed stamp fails closed").data
         );
         assert_eq!(2, crate::session::persistence::STAMPS_SERVED.get());
@@ -5538,7 +5539,7 @@ fn stamp_rollback_leaves_a_binding_taken_during_the_stamp_intact() {
         };
         let (failing_result, (installed_toolset, newer_toolset)) = tokio::join!(failing, rebind);
         assert_eq!(
-            Some(serde_json::json!("session load was superseded")),
+            Some(serde_json::json!("session identity stamp failed")),
             failing_result.expect_err("failed stamp fails closed").data
         );
         assert_eq!(1, crate::session::persistence::STAMPS_SERVED.get());
@@ -5606,7 +5607,7 @@ async fn adopting_attach_fails_with_the_stamp(
     };
     let (cold_result, adopt_error) = tokio::join!(cold, adopt);
     assert_eq!(
-        Some(serde_json::json!("session load was superseded")),
+        Some(serde_json::json!("session identity stamp failed")),
         cold_result.expect_err("cold attach fails closed").data
     );
     assert_eq!(
@@ -5677,7 +5678,7 @@ fn stamp_failure_on_a_settled_resident_releases_the_entry() {
             .await
             .expect_err("a failed stamp fails the installer closed");
         assert_eq!(
-            Some(serde_json::json!("session load was superseded")),
+            Some(serde_json::json!("session identity stamp failed")),
             error.data
         );
         assert_eq!(1, crate::session::persistence::STAMPS_SERVED.get());
@@ -5968,10 +5969,13 @@ async fn spawn_seeds_root_conversation_group_in_turn_config() {
                     .fs(acp::FileSystemCapabilities::new())
                     .terminal(false),
             );
-            agent
-                .spawn_and_register_session(&init, options, None)
-                .await
-                .expect("root session spawns");
+            assert!(matches!(
+                agent
+                    .spawn_and_register_session(&init, options, None)
+                    .await
+                    .expect("root session spawns"),
+                super::agent_ops::SessionInstallOutcome::Installed
+            ));
             let handle = agent
                 .resident_handle(&session_id)
                 .expect("spawn registers root session");

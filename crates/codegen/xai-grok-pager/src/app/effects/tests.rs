@@ -188,7 +188,7 @@ fn prompt_request_meta_omits_screen_mode_when_unset() {
 #[test]
 fn interject_params_omit_content_when_no_blocks() {
     let sid = acp::SessionId::new("s1");
-    let params = build_interject_params(&sid, "steer", "i1", None);
+    let params = build_interject_params(&sid, "steer", "i1", None, None);
     let obj = params.as_object().unwrap();
     assert!(!obj.contains_key("content"), "content key must be absent");
     assert_eq!(j(&obj, "sessionId"), "s1");
@@ -391,6 +391,7 @@ fn interject_params_carry_content_when_blocks_present() {
         "look at [Image #1]",
         "i1",
         Some(blocks.as_slice()),
+        None,
     );
     let content = j(&params, "content").as_array().expect("content array");
     assert_eq!(content.len(), 1);
@@ -1704,6 +1705,9 @@ async fn refused_interjection_shows_the_refusal_sentence() {
     execute(
         Effect::SendInterject {
             agent_id: AgentId(4),
+            binding: xai_grok_shell::session::current_actions::SnapshotBinding {
+                session_id: "test-session".into(), binding_epoch: 0, load_generation: 0,
+            },
             session_id: acp::SessionId::new("test-session"),
             text: "look".to_owned(),
             interjection_id: "i-1".to_owned(),
@@ -3292,4 +3296,16 @@ async fn hydrate_team_capability_adapter_maps_every_reply_to_the_asking_identity
             serde_json::from_str::<HydrateTeamCapabilityResponse>(r#"{"canadministerteam":true}"#)
                 .is_err()
         );
+}
+
+#[test]
+fn interject_wire_carries_the_original_dispatch_binding() {
+    let binding = xai_grok_shell::session::current_actions::SnapshotBinding {
+        session_id: "s1".into(), binding_epoch: 7, load_generation: 12,
+    };
+    let params = build_interject_params(&acp::SessionId::new("s1"), "same", "original-id", None, Some(&binding));
+    let captured: xai_grok_shell::session::current_actions::SnapshotBinding =
+        serde_json::from_value(params["currentActionsBinding"].clone()).unwrap();
+    assert_eq!(captured, binding);
+    assert!(params.get("content").is_none());
 }

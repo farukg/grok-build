@@ -8,6 +8,8 @@ use agent_client_protocol as acp;
 use super::{ExtResult, parse_params};
 use crate::agent::MvpAgent;
 use crate::session::SessionCommand;
+use crate::session::current_actions::{CurrentActionsSnapshot, Reader, SnapshotBinding};
+use super::current_actions::DeliveryRole;
 
 pub const INTERJECT_METHOD: &str = "x.ai/interject";
 
@@ -16,6 +18,8 @@ pub const INTERJECT_METHOD: &str = "x.ai/interject";
 pub struct InterjectRequest {
     pub session_id: String,
     pub text: String,
+    #[serde(default)]
+    pub current_actions_binding: Option<SnapshotBinding>,
     #[serde(default)]
     pub interjection_id: Option<String>,
     /// Optional structured blocks (text and images) from image-capable clients.
@@ -28,12 +32,21 @@ pub struct InterjectRequest {
 pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let req: InterjectRequest = parse_params(args)?;
     let sid: acp::SessionId = req.session_id.clone().into();
-    // An interjection racing a reconnect-replayed `session/load` (leader restart) waits for the load instead of failing
-    let session_handle = agent.session_handle_waiting_for_load(&sid).await;
-    let Some(session) = session_handle else {
-        return Err(
-            acp::Error::invalid_params().data(format!("session not found: {}", req.session_id))
-        );
+    let (session, delivery) = match req.current_actions_binding.as_ref() {
+        Some(binding) => {
+            let session = agent.resident_handle(&sid).ok_or_else(|| {
+                acp::Error::invalid_params().data("interject publication source unavailable")
+            })?;
+            let delivery = capture_publication(&sid, binding, session.current_actions.as_ref())?;
+            (session, delivery)
+        }
+        None => {
+            // Legacy reconnect requests retain the existing load wait without claiming a binding.
+            let session = agent.session_handle_waiting_for_load(&sid).await.ok_or_else(|| {
+                acp::Error::invalid_params().data(format!("session not found: {}", req.session_id))
+            })?;
+            (session, DeliveryRole::Unavailable)
+        }
     };
 
     let (text_override, images) = super::content::split_content(req.content);
@@ -41,11 +54,41 @@ pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
         text: text_override.unwrap_or(req.text),
         id: req.interjection_id,
         images,
+        delivery,
     });
 
     super::to_ext_response(Ok(serde_json::json!({
         "status": "queued",
     })))
+}
+
+pub(crate) fn capture_publication(
+    session_id: &acp::SessionId,
+    binding: &SnapshotBinding,
+    reader: Option<&Reader>,
+) -> Result<DeliveryRole, acp::Error> {
+    if binding.session_id != session_id.0.as_ref() {
+        return Err(acp::Error::invalid_params().data("interject publication session mismatch"));
+    }
+    let reader = reader.ok_or_else(|| {
+        acp::Error::invalid_params().data("interject publication source unavailable")
+    })?;
+    let context = reader.publication_context().ok_or_else(|| {
+        acp::Error::invalid_params().data("interject publication is not bound")
+    })?;
+    if context.binding != *binding {
+        return Err(acp::Error::invalid_params().data("interject publication binding superseded"));
+    }
+    match reader.snapshot(binding.clone()) {
+        CurrentActionsSnapshot::Current(snapshot)
+            if snapshot.version.incarnation == context.incarnation =>
+        {
+            Ok(DeliveryRole::Live { context })
+        }
+        CurrentActionsSnapshot::Current(_) | CurrentActionsSnapshot::Unavailable => {
+            Err(acp::Error::invalid_params().data("interject publication incarnation unavailable"))
+        }
+    }
 }
 
 pub const QUEUE_INTERJECT_METHOD: &str = "x.ai/queue/interject";

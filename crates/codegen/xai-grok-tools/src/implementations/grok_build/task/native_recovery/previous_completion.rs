@@ -1,5 +1,5 @@
 use super::super::coordinator_state::{
-    CompletedChild, CompletionReplyTarget, TerminalPublicationState, instant_to_epoch_ms,
+    CompletedChild, CompletedOrigin, CompletionReplyTarget, TerminalPublicationState, instant_to_epoch_ms,
 };
 use super::super::types::{
     AgentAddress, SpawnRootSpan, SubagentOwner, SubagentRequest, SubagentResult,
@@ -107,7 +107,7 @@ impl PreviousCompletion {
                 backgrounded: result.backgrounded,
                 resume_fallback: result.resume_fallback.clone(),
             },
-            started_at_epoch_ms: instant_to_epoch_ms(child.started_at),
+            started_at_epoch_ms: instant_to_epoch_ms(child.origin.since()),
             persona: child.persona.clone(),
             resumed_from: child.resumed_from.clone(),
             child_session_id: child.child_session_id.clone(),
@@ -176,7 +176,7 @@ impl PreviousCompletion {
                 spawn_root: SpawnRootSpan::from_traceparent(request.traceparent.clone()),
                 tool_call_id: request.tool_call_id.clone(),
             },
-            started_at,
+            origin: CompletedOrigin::Attempt { started_at },
             child_session_id: self.child_session_id.clone(),
             persona: self.persona.clone(),
             resumed_from: self.resumed_from.clone(),

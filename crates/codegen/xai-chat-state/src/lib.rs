@@ -29,6 +29,7 @@ pub mod actor;
 pub mod commands;
 pub mod completion;
 pub mod input_projection;
+pub mod interjection;
 pub use input_projection::{DeliveryBinding, DeliveryProjection, InputAdmission, InputProjection, ParentTask};
 pub mod context_item_ref;
 pub mod compaction_image_context;

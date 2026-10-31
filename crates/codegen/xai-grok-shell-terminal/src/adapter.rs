@@ -1355,6 +1355,10 @@ impl TerminalBackend for AcpTerminalAdapter {
         snapshots
     }
 
+    async fn registered_completion_tasks(&self) -> Result<Vec<TaskSnapshot>, ComputerError> {
+        Ok(self.list_tasks_metadata().await)
+    }
+
     async fn list_tasks_metadata(&self) -> Vec<TaskSnapshot> {
         // Snapshot path: one lock, no terminal/output RPCs, no log reads.
         let tasks = self

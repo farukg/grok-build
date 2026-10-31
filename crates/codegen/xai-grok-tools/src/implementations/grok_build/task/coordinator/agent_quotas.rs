@@ -127,6 +127,80 @@ impl AgentMessageQuotas {
     }
 }
 impl<R: ChildRunner> SubagentCoordinator<R> {
+    pub(crate) fn runtime_inventory_target(
+        &self,
+        id: &str,
+    ) -> Result<Option<super::super::inventory::ResidentChildTarget>, super::super::types::SubagentAccessError> {
+        use super::super::coordinator_state::TerminalOutput;
+        use super::super::inventory::{AttemptEvidence, ResidentChildTarget};
+        use super::inventory_capture::unavailable;
+        let pending_attempt = |child: &super::super::coordinator_state::PendingChild| {
+            if child.launched {
+                AttemptEvidence::Known(child.attempt_id.clone())
+            } else {
+                AttemptEvidence::NotStarted
+            }
+        };
+        let attempt = match self.terminal_outputs.get(id) {
+            Some(TerminalOutput::Committing { origin, completion, .. }) => {
+                origin.attempt_evidence(&completion.attempt_id)
+            }
+            Some(TerminalOutput::Publishing { attempt_id, parent_session_id, owner, .. }) => {
+                let child = self.completed.get(id).ok_or_else(|| unavailable(id))?;
+                if child.attempt_id != *attempt_id || child.request.parent_session_id != *parent_session_id
+                    || child.request.owner != *owner
+                {
+                    return Err(unavailable(id));
+                }
+                child.attempt_evidence()
+            }
+            Some(TerminalOutput::Finishing(_)) => {
+                if let Some(child) = self.active.get(id) {
+                    AttemptEvidence::Known(child.attempt_id.clone())
+                } else if let Some(child) = self.pending.get(id) {
+                    pending_attempt(child)
+                } else {
+                    return Err(unavailable(id));
+                }
+            }
+            None => {
+                if let Some(child) = self.active.get(id) {
+                    AttemptEvidence::Known(child.attempt_id.clone())
+                } else if let Some(child) = self.pending.get(id) {
+                    pending_attempt(child)
+                } else if let Some(queued) = self.queued.get(id) {
+                    queued.attempt()
+                } else if let Some(child) = self.completed.get(id) {
+                    child.attempt_evidence()
+                } else {
+                    return Ok(None);
+                }
+            }
+        };
+        Ok(Some(ResidentChildTarget {
+            attempt,
+            incarnation: self.target_incarnation_for_inventory(id).ok_or_else(|| unavailable(id))?,
+        }))
+    }
+
+    pub(crate) fn target_incarnation_for_inventory(
+        &self,
+        id: &str,
+    ) -> Option<uuid::Uuid> {
+        let quotas = &self.agent_message_quotas;
+        let target = if self.completed.contains_key(id)
+            && !self.pending.contains_key(id)
+            && !self.active.contains_key(id)
+            && !self.queued.contains_id(id)
+        {
+            quotas.displaced_incarnations.get(id)
+                .or_else(|| quotas.target_incarnations.get(id))
+        } else {
+            quotas.target_incarnations.get(id)
+        }?;
+        Some(target.generation)
+    }
+
     pub(super) fn current_target_incarnation(&mut self, id: &str) -> TargetIncarnationKey {
         self.agent_message_quotas.current_target(id)
     }

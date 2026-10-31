@@ -48,7 +48,7 @@ fn wake_barrier_armed(actor: &SessionActor) -> bool {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn resume_goal_clears_the_suppression_barrier_in_the_resume_transaction() {
+async fn resume_goal_cannot_reopen_a_stopped_session() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -61,35 +61,18 @@ async fn resume_goal_clears_the_suppression_barrier_in_the_resume_transaction() 
                     .pause(crate::session::goal_tracker::GoalPauseReason::User)
             );
             // Arm the post-stop barrier the way a StopGesture leaves it.
-            actor.set_completion_wake_policy(
-                crate::session::completion_delivery::CompletionWakePolicy::HumanStopped,
-            );
+            actor.tool_context.task_wake_suppressed.as_ref().unwrap().set(true);
             actor.state.lock().await.notifications_suppressed = true;
             seed_active_workflow_run(&actor, "wf-resume-1").await;
             actor.record_turn_wait(actor.snapshot_turn_wait().await);
             assert!(wake_barrier_armed(&actor));
 
             let outcome = actor.resume_goal().await;
-            let GoalResumeOutcome::Inference { user_msg, .. } = outcome else {
-                panic!("a paused goal must resume into inference")
-            };
-            assert_eq!(user_msg, "Goal resumed.");
-            assert!(
-                !wake_barrier_armed(&actor),
-                "the resume transaction must clear the wake barrier"
-            );
-            assert!(
-                !actor.state.lock().await.notifications_suppressed,
-                "the resume transaction must clear notification suppression"
-            );
-            assert_eq!(
-                actor.goal_tracker.lock().status(),
-                Some(crate::session::goal_tracker::GoalStatus::Active)
-            );
-            assert!(
-                !actor.declared_wait_blocks_continuation().await,
-                "resume is new human input and must break a declared wait"
-            );
+            assert!(matches!(outcome, GoalResumeOutcome::Message(_)));
+            assert!(wake_barrier_armed(&actor));
+            assert!(actor.state.lock().await.notifications_suppressed);
+            assert_eq!(actor.goal_tracker.lock().status(), Some(crate::session::goal_tracker::GoalStatus::UserPaused));
+            assert!(actor.declared_wait_blocks_continuation().await);
         })
         .await;
 }

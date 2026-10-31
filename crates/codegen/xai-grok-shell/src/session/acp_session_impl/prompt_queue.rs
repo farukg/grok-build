@@ -236,10 +236,13 @@ impl SessionActor {
         // Bump before any await so a LocalSet recap cannot commit/emit after this Prompt was accepted but before handle_prompt runs
         if policy.authority.is_human_intent() {
             self.invalidate_side_calls_for_new_prompt();
-            self.clear_wake_suppression("user_intake").await;
             self.set_goal_loop_active_resource(false).await;
         }
         self.observe_wait_input(input_origin.as_prompt_origin());
+        if matches!(input_origin.as_prompt_origin(), PromptOrigin::User) {
+            // Hook holds block promotion; Stop authority remains ACK-bound in turn input.
+            self.release_hook_block_hold("new_human_input").await;
+        }
 
         // Prompt history is human-authored history, not a generic conversational log.
         if policy.analytics.is_human_prompt()
@@ -746,6 +749,7 @@ impl SessionActor {
         let text = text_parts.join("\n\n");
         let image_count = attachments.len() as u32;
         self.pending_interjections.push(PendingInterjection {
+            id: Some(prompt_id.clone()),
             text: text.clone(),
             attachments,
         });

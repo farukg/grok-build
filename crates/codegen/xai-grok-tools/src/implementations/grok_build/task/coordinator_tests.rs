@@ -562,6 +562,7 @@ pub(in crate::implementations::grok_build::task::coordinator) fn request(
         cancel_token: CancellationToken::new(),
         spawn_root: Default::default(),
         tool_call_id: Some(format!("call-{id}")),
+        recorded_spawner: None,
     }
 }
 
@@ -2838,6 +2839,7 @@ async fn cancel_parent_session_kills_prior_turn_background() {
     prior.parent_prompt_id = Some("turn-1".into());
     let mut current = request("current", false);
     current.parent_prompt_id = Some("turn-2".into());
+    let mut expected_completions = Vec::new();
     let mut spawns = Vec::new();
     for req in [prior, current] {
         let id = req.id.clone();
@@ -2856,11 +2858,15 @@ async fn cancel_parent_session_kills_prior_turn_background() {
         );
         let _ = harness.start.send(());
         assert_eq!(harness.started.recv().await.as_deref(), Some(id.as_str()));
+        let (subagent_id, attempt_id, ..) = harness.wake_runs.recv().await.expect("runner attempt");
+        expected_completions.push(xai_message_delivery_core::SubagentCompletionId { subagent_id, attempt_id });
     }
-    assert!(matches!(
-        parent_backend(&harness).cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled { .. }
-    ));
+    expected_completions.sort_unstable_by(|a, b| a.subagent_id.cmp(&b.subagent_id));
+    let revocation = parent_backend(&harness).cancel_parent_session().await.expect("revocation ACK");
+    assert_eq!(revocation.parent_session_id, "parent");
+    assert_eq!(revocation.completions, expected_completions);
+    let repeated = parent_backend(&harness).cancel_parent_session().await.expect("repeat revocation ACK");
+    assert_eq!(repeated.completions, revocation.completions, "stop must not mint producer identities");
     for id in ["prior-bg", "current"] {
         let snapshot = harness
             .backend
@@ -2914,10 +2920,9 @@ async fn cancel_parent_session_does_not_touch_foreign_session() {
         Some("foreign-child")
     );
 
-    assert!(matches!(
-        parent_backend(&harness).cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled { .. }
-    ));
+    let revocation = parent_backend(&harness).cancel_parent_session().await.expect("revocation ACK");
+    assert_eq!(revocation.parent_session_id, "parent");
+    assert!(revocation.completions.is_empty(), "foreign producer identities must not leak");
     // Foreign child still running — finish it successfully.
     let _ = harness.finish.send(());
     let disposition = harness.completions.recv().await.unwrap();
@@ -2929,12 +2934,12 @@ async fn cancel_parent_session_does_not_touch_foreign_session() {
 
 /// Unbound backend must not wildcard-cancel (rejects before send).
 #[tokio::test]
-async fn cancel_parent_session_unbound_backend_is_not_found() {
+async fn cancel_parent_session_unbound_backend_is_unavailable() {
     let (tx, _rx) = mpsc::unbounded_channel();
     let unbound = ChannelBackend::new(tx);
     assert!(matches!(
         unbound.cancel_parent_session().await,
-        SubagentCancelOutcome::NotFound
+        Err(super::types::SubagentAccessError::ParentSessionUnavailable)
     ));
 }
 
@@ -2959,10 +2964,8 @@ async fn cancel_parent_session_rejects_late_spawn_until_admission_reopens() {
     let _ = harness.start.send(());
     assert_eq!(harness.started.recv().await.as_deref(), Some("prior"));
 
-    assert!(matches!(
-        bound.cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled { .. }
-    ));
+    let revocation = bound.cancel_parent_session().await.expect("revocation ACK");
+    assert_eq!(revocation.parent_session_id, "parent");
     let prior_snapshot = harness
         .backend
         .query("prior", true, Some(5_000), None)
@@ -3088,11 +3091,20 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
         .await
         .expect("nested pending observed");
     assert_eq!(observed_pending.owner.workflow_run_id(), Some("run-1"));
+    assert_eq!(observed.recorded_spawner, Some(super::inventory::RecordedSubagentSpawner::Child {
+        subagent_id: "wf-child".to_owned(), session_id: "wf-child".to_owned(),
+    }));
+    assert_eq!(observed_pending.recorded_spawner, observed.recorded_spawner);
 
-    assert!(matches!(
-        parent_backend(&harness).cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled { .. }
-    ));
+    let revocation = parent_backend(&harness).cancel_parent_session().await.expect("revocation ACK");
+    assert_eq!(revocation.parent_session_id, "parent");
+    let mut expected = Vec::new();
+    for _ in 0..3 {
+        let (subagent_id, attempt_id, ..) = harness.wake_runs.recv().await.expect("workflow runner attempt");
+        expected.push(xai_message_delivery_core::SubagentCompletionId { subagent_id, attempt_id });
+    }
+    expected.sort_unstable_by(|a, b| a.subagent_id.cmp(&b.subagent_id));
+    assert_eq!(revocation.completions, expected, "workflow identities are sealed without native cancellation");
 
     // Promote pending → active, then finish all three (must wait until each is
     // subscribed on finish; broadcast does not buffer for late receivers).

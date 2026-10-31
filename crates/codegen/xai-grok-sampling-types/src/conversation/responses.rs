@@ -1,4 +1,5 @@
 use super::*;
+use crate::instruction_projection::{InstructionContentEncoding, InstructionContentPath, ProviderInstructionPath, ProviderInstructionPlan};
 
 /// Flatten `response.output` into `ConversationItem`s, preserving emission order.
 /// Replaying that order byte for byte on the next turn is what keeps the server-side prefix cache hot.
@@ -104,81 +105,87 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
 
 impl From<&ConversationRequest> for rs::CreateResponse {
     fn from(req: &ConversationRequest) -> Self {
-        let input = build_responses_input(req);
-        let tools = build_responses_tools(req);
-
-        let tool_choice = req.tool_choice.as_ref().map(|tc| match tc {
-            ConversationToolChoice::Auto => rs::ToolChoiceParam::Mode(rs::ToolChoiceOptions::Auto),
-            ConversationToolChoice::None => rs::ToolChoiceParam::Mode(rs::ToolChoiceOptions::None),
-            ConversationToolChoice::Required => {
-                rs::ToolChoiceParam::Mode(rs::ToolChoiceOptions::Required)
-            }
-            ConversationToolChoice::Function(name) => {
-                rs::ToolChoiceParam::Function(rs::ToolChoiceFunction { name: name.clone() })
-            }
-        });
-
-        let text = req
-            .json_schema
-            .as_ref()
-            .map(|schema| rs::ResponseTextParam {
-                format: rs::TextResponseFormatConfiguration::JsonSchema(
-                    rs::ResponseFormatJsonSchema {
-                        description: None,
-                        name: STRUCTURED_OUTPUT_SCHEMA_NAME.to_string(),
-                        schema: Some(schema.clone()),
-                        strict: Some(true),
-                    },
-                ),
-                verbosity: None,
-            });
-
-        rs::CreateResponse {
-            background: None,
-            conversation: None,
-            include: None,
-            input,
-            instructions: None,
-            max_output_tokens: req.max_output_tokens,
-            max_tool_calls: None,
-            metadata: None,
-            model: req.model.clone(),
-            parallel_tool_calls: None,
-            previous_response_id: None,
-            prompt: None,
-            prompt_cache_key: req
-                .prompt_cache_key
-                .clone()
-                .or_else(|| req.x_grok_conv_id.clone()),
-            prompt_cache_retention: None,
-            reasoning: Some(rs::Reasoning {
-                effort: req.reasoning_effort.and_then(|e| e.to_responses_api()),
-                summary: crate::ReasoningSummary::default().to_responses_api(),
-            }),
-            safety_identifier: None,
-            service_tier: None,
-            store: None,
-            stream: None,
-            stream_options: None,
-            temperature: req.temperature,
-            text,
-            tool_choice,
-            tools: if tools.is_empty() { None } else { Some(tools) },
-            top_logprobs: None,
-            top_p: req.top_p,
-            truncation: None,
-        }
+        responses_request_with_instructions(req).0
     }
 }
 
+pub fn responses_request_with_instructions(req: &ConversationRequest) -> (rs::CreateResponse, ProviderInstructionPlan) {
+    let (input, plan) = build_responses_input(req);
+    let tools = build_responses_tools(req);
+
+    let tool_choice = req.tool_choice.as_ref().map(|tc| match tc {
+        ConversationToolChoice::Auto => rs::ToolChoiceParam::Mode(rs::ToolChoiceOptions::Auto),
+        ConversationToolChoice::None => rs::ToolChoiceParam::Mode(rs::ToolChoiceOptions::None),
+        ConversationToolChoice::Required => {
+            rs::ToolChoiceParam::Mode(rs::ToolChoiceOptions::Required)
+        }
+        ConversationToolChoice::Function(name) => {
+            rs::ToolChoiceParam::Function(rs::ToolChoiceFunction { name: name.clone() })
+        }
+    });
+
+    let text = req
+        .json_schema
+        .as_ref()
+        .map(|schema| rs::ResponseTextParam {
+            format: rs::TextResponseFormatConfiguration::JsonSchema(
+                rs::ResponseFormatJsonSchema {
+                    description: None,
+                    name: STRUCTURED_OUTPUT_SCHEMA_NAME.to_string(),
+                    schema: Some(schema.clone()),
+                    strict: Some(true),
+                },
+            ),
+            verbosity: None,
+        });
+
+    let request = rs::CreateResponse {
+        background: None,
+        conversation: None,
+        include: None,
+        input,
+        instructions: None,
+        max_output_tokens: req.max_output_tokens,
+        max_tool_calls: None,
+        metadata: None,
+        model: req.model.clone(),
+        parallel_tool_calls: None,
+        previous_response_id: None,
+        prompt: None,
+        prompt_cache_key: req
+            .prompt_cache_key
+            .clone()
+            .or_else(|| req.x_grok_conv_id.clone()),
+        prompt_cache_retention: None,
+        reasoning: Some(rs::Reasoning {
+            effort: req.reasoning_effort.and_then(|e| e.to_responses_api()),
+            summary: crate::ReasoningSummary::default().to_responses_api(),
+        }),
+        safety_identifier: None,
+        service_tier: None,
+        store: None,
+        stream: None,
+        stream_options: None,
+        temperature: req.temperature,
+        text,
+        tool_choice,
+        tools: if tools.is_empty() { None } else { Some(tools) },
+        top_logprobs: None,
+        top_p: req.top_p,
+        truncation: None,
+    };
+    (request, plan)
+}
+
 /// Reasoning items stay top-level siblings rather than folding into the assistant, so the input replays the model's original order.
-pub(super) fn build_responses_input(req: &ConversationRequest) -> rs::InputParam {
-    let items: Vec<rs::InputItem> = req
-        .items
-        .iter()
-        .flat_map(conversation_item_to_input_items)
-        .collect();
-    rs::InputParam::Items(items)
+pub(super) fn build_responses_input(req: &ConversationRequest) -> (rs::InputParam, ProviderInstructionPlan) {
+    let mut items = Vec::new();
+    let mut plan = ProviderInstructionPlan::new(crate::ApiBackend::Responses);
+    for item in &req.items {
+        let converted = conversation_item_to_input_items(item, &mut plan, items.len());
+        items.extend(converted);
+    }
+    (rs::InputParam::Items(items), plan)
 }
 
 /// Inject the `type: "reasoning_text"` discriminator the API requires.
@@ -204,9 +211,11 @@ pub fn patch_reasoning_text_types(body: &mut serde_json::Value) {
     }
 }
 
-fn conversation_item_to_input_items(item: &ConversationItem) -> Vec<rs::InputItem> {
+fn conversation_item_to_input_items(item: &ConversationItem, plan: &mut ProviderInstructionPlan, index: usize) -> Vec<rs::InputItem> {
+    let path = ProviderInstructionPath::ResponsesInput { index, content: InstructionContentPath::Whole };
     match item {
         ConversationItem::System(s) => {
+            plan.record_item(item, path, InstructionContentEncoding::SingleText);
             vec![rs::InputItem::EasyMessage(rs::EasyInputMessage {
                 r#type: rs::MessageType::Message,
                 role: rs::Role::System,
@@ -215,6 +224,11 @@ fn conversation_item_to_input_items(item: &ConversationItem) -> Vec<rs::InputIte
         }
         ConversationItem::User(u) => {
             let content = content_parts_to_easy_input_content(&u.content);
+            let encoding = match &content {
+                rs::EasyInputContent::Text(_) => InstructionContentEncoding::SingleText,
+                rs::EasyInputContent::ContentList(_) => InstructionContentEncoding::Blocks,
+            };
+            plan.record_item(item, path, encoding);
             vec![rs::InputItem::EasyMessage(rs::EasyInputMessage {
                 r#type: rs::MessageType::Message,
                 role: rs::Role::User,

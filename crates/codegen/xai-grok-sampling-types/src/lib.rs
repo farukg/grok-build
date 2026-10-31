@@ -20,6 +20,7 @@ pub mod serde_helpers;
 pub mod served_route;
 mod output_origin;
 pub use output_origin::{OutputChannel, OutputOrigin, ProviderOutputRef};
+pub mod instruction_projection;
 mod source_occurrence;
 pub use source_occurrence::{CoverageKnowledge, ContentEvidence, ContentTransform, CompactionCoverage, ConversationReasoningItem, ProjectedRequestMember, SourceOccurrence, SourceOccurrenceId};
 pub mod tool_overrides;

@@ -539,6 +539,7 @@ fn base_meta() -> SubagentMeta {
     SubagentMeta {
         subagent_id: "sa".into(),
         recorded_owner: None,
+        recorded_spawner: None,
         attempt_id: None,
         parent_session_id: "parent".into(),
         child_session_id: "child".into(),

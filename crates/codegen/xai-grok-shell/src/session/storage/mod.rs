@@ -698,6 +698,7 @@ pub(crate) mod chat_rebuild {
                 SyntheticReason::Human
             };
             let item = ConversationItem::User(UserItem {
+                interjection: None,
                 evidence: Default::default(),
                 source: Default::default(),
                 content,
@@ -1306,6 +1307,22 @@ impl SessionFileSet {
 /// Abstracts over different storage backends (JSONL, SQLite, etc.)
 #[async_trait]
 pub trait StorageAdapter: Send + Sync {
+    async fn lookup_interjection_receipt(&self, _info: &Info, _state: &jsonl::interjection::InterjectionStorage, _id: &str) -> Result<Option<xai_chat_state::interjection::InterjectionReceipt>, jsonl::interjection::InterjectionStorageError> {
+        Err(jsonl::interjection::InterjectionStorageError::NotCommitted(io::Error::new(io::ErrorKind::Unsupported, "durable interjection receipts unsupported")))
+    }
+
+    async fn persist_interjection_projection(&self, _info: &Info, _state: &jsonl::interjection::InterjectionStorage, _projection: jsonl::interjection::InterjectionProjection) -> Result<jsonl::interjection::InterjectionAppend, jsonl::interjection::InterjectionStorageError> {
+        Err(jsonl::interjection::InterjectionStorageError::NotCommitted(io::Error::new(io::ErrorKind::Unsupported, "durable interjection projections unsupported")))
+    }
+
+    async fn restore_interjections(&self, _info: &Info) -> Result<(jsonl::interjection::InterjectionStorage, xai_chat_state::interjection::InterjectionIndex), jsonl::interjection::InterjectionStorageError> {
+        Err(jsonl::interjection::InterjectionStorageError::NotCommitted(io::Error::new(io::ErrorKind::Unsupported, "durable interjection receipts unsupported")))
+    }
+
+    async fn append_interjection_receipt(&self, _info: &Info, _state: &jsonl::interjection::InterjectionStorage, _receipt: &xai_chat_state::interjection::InterjectionReceipt) -> Result<jsonl::interjection::InterjectionAppend, jsonl::interjection::InterjectionStorageError> {
+        Err(jsonl::interjection::InterjectionStorageError::NotCommitted(io::Error::new(io::ErrorKind::Unsupported, "durable interjection receipts unsupported")))
+    }
+
     /// Initialize a new session or load existing one
     async fn init_session(&self, info: &Info, model_id: acp::ModelId) -> io::Result<Summary>;
 
@@ -1570,6 +1587,14 @@ pub trait StorageAdapter: Send + Sync {
             io::ErrorKind::Unsupported,
             "completion recovery is unsupported",
         ))
+    }
+    async fn seal_human_stopped_completions(
+        &self,
+        _info: &Info,
+        _ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+        _workflow_episodes: Vec<crate::session::workflow::tracker::WorkflowEpisodeId>,
+    ) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "atomic Stop persistence is unsupported"))
     }
     async fn set_completion_wake_policy(
         &self,
@@ -1857,7 +1882,7 @@ pub use replay::{
     ReplayedUpdate, load_updates_for_replay, prepare_replay_lines, replay_would_emit,
     stream_replay_updates_at, stream_replay_updates_at_hinted,
 };
-pub(crate) use replay::{ReplayToolCollapser, UnfinishedSubagent, filter_delta_replay_lines};
+pub(crate) use replay::{ReplayToolCollapser, UnfinishedSubagent, filter_delta_replay_lines, prepare_parent_replay_lines};
 
 /// Extracts `method` and raw `params` from an updates.jsonl envelope without parsing the notification payload.
 #[derive(serde::Deserialize)]

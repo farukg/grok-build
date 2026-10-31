@@ -26,6 +26,7 @@ fn child_meta(id: &str, parent: &str, status: SubagentMetaStatus) -> SubagentMet
     SubagentMeta {
         subagent_id: id.to_owned(),
         recorded_owner: None,
+        recorded_spawner: None,
         attempt_id: None,
         parent_session_id: parent.to_owned(),
         child_session_id: id.to_owned(),

@@ -3377,6 +3377,13 @@ impl TerminalBackend for LocalTerminalBackend {
         reply_rx.await.unwrap_or_default()
     }
 
+    async fn registered_completion_tasks(&self) -> Result<Vec<TaskSnapshot>, ComputerError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(TerminalCommand::ListTasks { include_output: false, reply }).await
+            .map_err(|_| ComputerError::io("terminal completion registry owner closed"))?;
+        response.await.map_err(|_| ComputerError::io("terminal completion registry acknowledgement lost"))
+    }
+
     async fn list_tasks_metadata(&self) -> Vec<TaskSnapshot> {
         let (reply_tx, reply_rx) = oneshot::channel();
         if self

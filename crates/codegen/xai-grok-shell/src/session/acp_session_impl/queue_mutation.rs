@@ -9,6 +9,7 @@ pub(crate) struct InputOrigin(
     Vec<xai_chat_state::completion::CompletionIdentity>,
     crate::session::completion_delivery::CompletionOffer,
     super::notification_drain::NotificationBatchPayload,
+    Option<xai_grok_sampling_types::InterjectionIdentity>,
 );
 
 impl InputOrigin {
@@ -22,7 +23,20 @@ impl InputOrigin {
             Vec::new(),
             crate::session::completion_delivery::CompletionOffer::None,
             super::notification_drain::NotificationBatchPayload::TerminalOnly,
+            None,
         )
+    }
+
+    pub(crate) fn with_interjection(
+        mut self,
+        identity: Option<xai_grok_sampling_types::InterjectionIdentity>,
+    ) -> Self {
+        self.4 = identity;
+        self
+    }
+
+    pub(crate) fn interjection(&self) -> Option<&xai_grok_sampling_types::InterjectionIdentity> {
+        self.4.as_ref()
     }
 
     pub(crate) fn with_completions(

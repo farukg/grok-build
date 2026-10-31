@@ -127,6 +127,7 @@ fn prior_wake_meta(id: &str, model_id: &str) -> SubagentMeta {
     SubagentMeta {
         subagent_id: id.to_owned(),
         recorded_owner: None,
+        recorded_spawner: None,
         attempt_id: Some("at1.prior".to_owned()),
         parent_session_id: "setup-parent".to_owned(),
         child_session_id: id.to_owned(),

@@ -273,9 +273,16 @@ impl JsonlStorageAdapter {
         target_info: &Info,
         options: CopySessionOptions,
     ) -> io::Result<CopySessionResult> {
+        if source_info.id == target_info.id {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "copy requires a new session identity"));
+        }
         // Canonical creator: the fork target chain is born owner-only.
         let target_dir = self.create_session_dir_owner_only(target_info)?;
         let _target_chat_lock = Self::lock_append(&self.chat_file(target_info))?;
+        if Self::retained_interjections(&self.chat_file(target_info))?.receipts().next().is_some() {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "copy target owns interjection admissions"));
+        }
+        // Conversation provenance is inherited; original-session admission authority is not.
         let target_summary_lock = crate::session::storage::summary_write::open_lock_file(
             &self.summary_lock_file(target_info),
         )?;

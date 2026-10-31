@@ -468,3 +468,37 @@ async fn output_ack_transport_keeps_mailbox_closed_distinct_from_reply_lost() {
     drop(reply);
     assert!(matches!(request.await.unwrap(), Err(crate::MutationAdmissionError::ReplyLost(_))));
 }
+
+#[tokio::test]
+async fn interjection_identity_and_source_survive_restart_and_request_retries() {
+    let h = TestHarness::new();
+    for id in ["first", "second"] {
+        let mut item = ConversationItem::interjection("same model-facing frame");
+        let ConversationItem::User(user) = &mut item else { panic!("interjection is user input"); };
+        user.interjection = Some(xai_grok_sampling_types::InterjectionIdentity {
+            id: id.into(), display_text: "same original input".into(),
+        });
+        h.handle.push_user_message(item);
+    }
+    let history = h.handle.get_conversation().await;
+    assert_eq!(history.len(), 2);
+    let sources: Vec<_> = history.iter().map(ConversationItem::source).collect();
+    assert_ne!(sources[0], sources[1]);
+    let restarted = TestHarness::with_conversation(
+        serde_json::from_value(serde_json::to_value(history).unwrap()).unwrap(),
+    );
+    for request in ["original", "lost-ack-retry"] {
+        let built = restarted.handle.build_request(vec![], None, true, None, "conv".into(), request.into()).await.unwrap();
+        let records: Vec<_> = built.injected_records.iter().filter_map(|record| match record {
+            crate::InjectedRequestRecord::Synthetic { interjection: Some(identity), source, .. } => Some((identity, source)),
+            _ => None,
+        }).collect();
+        assert_eq!(records.len(), 2);
+        for ((identity, source), (id, expected_source)) in records.into_iter().zip(["first", "second"].into_iter().zip(&sources)) {
+            assert_eq!(identity.id, id);
+            assert_eq!(identity.display_text, "same original input");
+            assert_eq!(source, expected_source);
+        }
+        assert_eq!(restarted.handle.get_conversation().await.len(), 2);
+    }
+}

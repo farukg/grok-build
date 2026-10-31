@@ -9,6 +9,7 @@ description = "Actor-based chat state management for xAI agents"
 default-bazel = []
 
 [dependencies]
+agent-client-protocol = { workspace = true }
 indexmap = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

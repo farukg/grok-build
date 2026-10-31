@@ -7,6 +7,8 @@ use crate::format::format_interjection;
 /// `Attachment` is host-defined (inline images, asset IDs); core never reads it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingInterjection<Attachment> {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub text: String,
     pub attachments: Vec<Attachment>,
 }
@@ -14,6 +16,7 @@ pub struct PendingInterjection<Attachment> {
 /// A drained entry, wrapped and ready to emit as a synthetic user message.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormattedInterjection<Attachment> {
+    pub id: Option<String>,
     pub text: String,
     pub attachments: Vec<Attachment>,
 }
@@ -35,6 +38,7 @@ pub fn drain_formatted<Attachment>(
         .drain_all()
         .into_iter()
         .map(|entry| FormattedInterjection {
+            id: entry.id,
             text: format_interjection(sanitize_text(entry.text)),
             attachments: entry.attachments,
         })
@@ -49,10 +53,12 @@ mod tests {
     fn drain_formatted_sanitizes_wraps_and_preserves_order() {
         let buf: InterjectionBuffer<()> = InterjectionBuffer::new();
         buf.push(PendingInterjection {
+            id: None,
             text: "look at [SECRET] one".into(),
             attachments: vec![],
         });
         buf.push(PendingInterjection {
+            id: None,
             text: "two".into(),
             attachments: vec![],
         });

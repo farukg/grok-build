@@ -40,13 +40,13 @@ pub(crate) fn preview(
                 request_body::chat_body(&payload, request_body::BodyMode::Streaming)
             }
             ApiBackend::Responses => {
-                let mut payload = request_body::responses_request(request, request_body::BodyMode::Streaming);
+                let (mut payload, _) = request_body::responses_request(request, request_body::BodyMode::Streaming);
                 request_body::apply_response_defaults(&defaults, &mut payload)?;
                 payload.inner.stream = Some(true);
                 request_body::responses_body(&defaults, &mut payload, request_body::BodyMode::Streaming)
             }
             ApiBackend::Messages => {
-                let mut payload = request_body::messages_request(request, request_body::BodyMode::Streaming);
+                let (mut payload, _) = request_body::messages_request(request, request_body::BodyMode::Streaming);
                 request_body::apply_message_defaults(&defaults, &mut payload)?;
                 payload.inner.stream = Some(true);
                 request_body::json_body(&payload.inner)

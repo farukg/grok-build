@@ -1041,6 +1041,7 @@ pub enum SessionCommand {
         /// Pasted images attached to the interjection.
         /// Empty from text-only or older clients.
         images: Vec<acp::ImageContent>,
+        delivery: crate::extensions::current_actions::DeliveryRole,
     },
     /// Trigger a model turn so the model can print a visible goal progress summary.
     /// The goal orchestrator injects a system reminder into context (via `push_parent_reminder`) *before* sending this command.

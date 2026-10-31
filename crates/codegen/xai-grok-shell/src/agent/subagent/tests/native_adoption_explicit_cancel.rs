@@ -130,19 +130,23 @@ async fn cancel_released_adoption(caller: ReleasedCancel) {
             );
             let probe = bounded(observed.recv()).await.unwrap();
             let actor = bounded(actors.recv()).await.unwrap();
-            let outcome = match caller {
-                ReleasedCancel::ById => stop(&backend, &f.reference).await,
-                ReleasedCancel::ParentStop => bounded(backend.cancel_parent_session()).await,
+            match caller {
+                ReleasedCancel::ById => {
+                    assert!(matches!(stop(&backend, &f.reference).await, SubagentCancelOutcome::Cancelled { .. }));
+                }
+                ReleasedCancel::ParentStop => {
+                    let revoked = bounded(backend.cancel_parent_session()).await.unwrap();
+                    assert_eq!(revoked.parent_session_id, f.parent.0.to_string());
+                    assert!(revoked.completions.iter().any(|id| id.subagent_id == f.reference.receiver.session_id));
+                }
                 ReleasedCancel::ParentShutdown => {
                     let (respond_to, response) = oneshot::channel();
-                    assert!(
-                        backend
-                            .request_cancel_parent_session(ChildCancellation::Shutdown, respond_to)
-                    );
-                    bounded(response).await.unwrap()
+                    backend.request_cancel_parent_session(ChildCancellation::Shutdown, respond_to).unwrap();
+                    let revoked = bounded(response).await.unwrap().unwrap();
+                    assert_eq!(revoked.parent_session_id, f.parent.0.to_string());
+                    assert!(revoked.completions.iter().any(|id| id.subagent_id == f.reference.receiver.session_id));
                 }
-            };
-            assert!(matches!(outcome, SubagentCancelOutcome::Cancelled { .. }));
+            }
             bounded(probe.cancellation.cancelled()).await;
             probe.release.send(()).unwrap();
             match caller {

@@ -69,17 +69,82 @@ pub(super) fn read_owned(
     id: &str,
     parent_session: &str,
 ) -> io::Result<SubagentMeta> {
-    let meta = read_meta(&owned_dir(parent, id)?)?;
+    read_owned_bytes(parent, id, parent_session).map(|(meta, _)| meta)
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("child metadata audience mismatch")]
+struct MetadataAudienceMismatch {
+    digest: String,
+}
+
+pub(super) fn read_owned_bytes(
+    parent: &Path,
+    id: &str,
+    parent_session: &str,
+) -> io::Result<(SubagentMeta, Vec<u8>)> {
+    let bytes = std::fs::read(owned_dir(parent, id)?.join("meta.json"))?;
+    let meta: SubagentMeta = serde_json::from_slice(&bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid child metadata"))?;
     if meta.subagent_id != id
         || meta.child_session_id != id
         || meta.parent_session_id != parent_session
     {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "child metadata audience mismatch",
+            MetadataAudienceMismatch { digest: super::inventory::digest(&bytes) },
         ));
     }
-    Ok(meta)
+    Ok((meta, bytes))
+}
+
+pub(super) fn enumerate_owned(
+    parent: &Path,
+    parent_session: &str,
+) -> (Vec<(SubagentMeta, Vec<u8>)>, Vec<xai_grok_tools::implementations::grok_build::task::inventory::InventoryIssue>) {
+    use xai_grok_tools::implementations::grok_build::task::inventory::{InventoryIssue, InventoryReadSource};
+    let mut records = Vec::new();
+    let mut issues = Vec::new();
+    let entries = match std::fs::read_dir(parent.join("subagents")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return (records, issues),
+        Err(error) => {
+            issues.push(super::inventory::io_issue(InventoryReadSource::ParentDirectory, &error));
+            return (records, issues);
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                issues.push(super::inventory::io_issue(InventoryReadSource::ParentDirectory, &error));
+                continue;
+            }
+        };
+        let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+            issues.push(InventoryIssue::Decode { source: InventoryReadSource::ParentDirectory });
+            continue;
+        };
+        let source = InventoryReadSource::ParentMeta { subagent_id: id.clone() };
+        match read_owned_bytes(parent, &id, parent_session) {
+            Ok(record) => records.push(record),
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                issues.push(InventoryIssue::Decode { source });
+            }
+            Err(error) => {
+                match error.get_ref().and_then(|error| error.downcast_ref::<MetadataAudienceMismatch>()) {
+                    Some(mismatch) => issues.push(InventoryIssue::IdentityMismatch {
+                        source: xai_grok_tools::implementations::grok_build::task::inventory::ChildEvidenceSource::ParentMeta {
+                            subagent_id: id, digest: mismatch.digest.clone(),
+                        },
+                    }),
+                    None => issues.push(super::inventory::io_issue(source, &error)),
+                }
+            }
+        }
+    }
+    records.sort_by(|(left, _), (right, _)| left.subagent_id.cmp(&right.subagent_id));
+    (records, issues)
 }
 
 fn matches_attempt(

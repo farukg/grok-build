@@ -69,6 +69,8 @@ pub struct PreparedReplay<'a> {
     pub(crate) total_live: usize,
     /// Replayed spawns with no matching finish (a rewind can drop the finish), reconciled on load.
     pub(crate) unfinished_subagents: Vec<UnfinishedSubagent>,
+    pub(crate) child_evidence: Vec<xai_grok_tools::implementations::grok_build::task::inventory::ChildEvidenceRecord>,
+    pub(crate) child_evidence_issues: Vec<xai_grok_tools::implementations::grok_build::task::inventory::InventoryIssue>,
 }
 
 /// Gates the caller's post-replay memory purge (`Empty` means nothing was reclaimable).
@@ -385,6 +387,7 @@ fn rewind_filtered_live(raw: &str) -> Vec<&str> {
 
 /// Unpaired spawns across the rewind-filtered timeline.
 /// The substring pre-filter keeps non-subagent lines off the JSON path.
+#[cfg(test)]
 pub(crate) fn collect_unfinished_subagents(filtered: &[&str]) -> Vec<UnfinishedSubagent> {
     let mut pending: std::collections::BTreeMap<String, UnfinishedSubagent> =
         std::collections::BTreeMap::new();
@@ -522,21 +525,44 @@ fn line_has_event_id(line: &str, cursor_id: &str) -> bool {
 /// Resolving against the inclusive set keeps reconnect incremental instead of a full replay.
 #[doc(hidden)]
 pub fn prepare_replay_lines<'a>(contents: &'a str, cursor: Option<&str>) -> PreparedReplay<'a> {
+    prepare_replay_lines_for_parent(contents, cursor, None)
+}
+
+pub(crate) fn prepare_parent_replay_lines<'a>(
+    contents: &'a str, cursor: Option<&str>, parent_session_id: &str,
+) -> PreparedReplay<'a> {
+    prepare_replay_lines_for_parent(contents, cursor, Some(parent_session_id))
+}
+
+fn prepare_replay_lines_for_parent<'a>(
+    contents: &'a str, cursor: Option<&str>, parent_session_id: Option<&str>,
+) -> PreparedReplay<'a> {
     let filtered = filter_rewind_lines(contents.lines().filter(|l| !l.trim().is_empty()).collect());
 
+    use xai_grok_tools::implementations::grok_build::task::inventory::{ChildEvidenceSource, InventoryIssue, InventoryReadSource};
+    use crate::agent::subagent::inventory;
+    let mut child_evidence = Vec::new();
+    let mut child_evidence_issues = Vec::new();
+    let mut original_line = 1u64;
+    let mut previous_offset = 0usize;
     let mut max_event_seq: Option<u64> = None;
     for line in &filtered {
-        if line.contains("eventId")
-            && let Ok(env) = serde_json::from_str::<RawLinePeek<'_>>(line)
-            && let Some(raw) = env.params.map(|p| p.get())
-            && let Ok(pp) = serde_json::from_str::<RawParamsPeek<'_>>(raw)
-            && let Some(meta_raw) = pp.meta
-            && let Ok(meta) = serde_json::from_str::<serde_json::Value>(meta_raw.get())
-            && let Some(seq) = meta
-                .get("eventId")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.rsplit('-').next())
-                .and_then(|c| c.parse::<u64>().ok())
+        let offset = line.as_ptr() as usize - contents.as_ptr() as usize;
+        original_line += contents.as_bytes()[previous_offset..offset].iter().filter(|&&byte| byte == b'\n').count() as u64;
+        previous_offset = offset;
+        if line.contains("subagent_spawned") || line.contains("subagent_finished") {
+            let source = ChildEvidenceSource::ParentJournal {
+                line: original_line, byte_offset: offset as u64, byte_len: line.len() as u64,
+                event_id: line_event_id(line).map(|id| id.into_owned()),
+                digest: inventory::digest(line.as_bytes()),
+            };
+            match inventory::journal_records(line, source, parent_session_id) {
+                Ok(records) => child_evidence.extend(records),
+                Err(_) => child_evidence_issues.push(InventoryIssue::Decode { source: InventoryReadSource::ParentJournal }),
+            }
+        }
+        if let Some(seq) = line_event_id(line)
+            .and_then(|id| id.rsplit('-').next().and_then(|suffix| suffix.parse::<u64>().ok()))
         {
             max_event_seq = Some(max_event_seq.map_or(seq, |m| m.max(seq)));
         }
@@ -576,13 +602,31 @@ pub fn prepare_replay_lines<'a>(contents: &'a str, cursor: Option<&str>) -> Prep
         }
     }
 
+    use xai_grok_tools::implementations::grok_build::task::inventory::ChildEvidence;
+    let mut unfinished = BTreeMap::new();
+    for record in &child_evidence {
+        let attempt_id = record.attempt.known().map(ToString::to_string);
+        let key = (record.subagent_id.clone(), attempt_id.clone());
+        match &record.value {
+            ChildEvidence::Identity { child_session_id: Some(child_session_id), .. } => {
+                unfinished.insert(key, UnfinishedSubagent {
+                    subagent_id: record.subagent_id.clone(), attempt_id,
+                    child_session_id: child_session_id.clone(),
+                });
+            }
+            ChildEvidence::Terminal { .. } => { unfinished.remove(&key); }
+            ChildEvidence::Identity { child_session_id: None, .. } | ChildEvidence::Nonterminal { .. } => {}
+        }
+    }
     PreparedReplay {
         lines,
         mark_replay,
         last_tokens,
         max_event_seq,
         total_live,
-        unfinished_subagents: collect_unfinished_subagents(&filtered),
+        unfinished_subagents: unfinished.into_values().collect(),
+        child_evidence,
+        child_evidence_issues,
     }
 }
 

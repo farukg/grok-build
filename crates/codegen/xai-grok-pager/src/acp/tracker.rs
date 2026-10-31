@@ -47,7 +47,7 @@ pub(crate) use tools::{CurrentToolProjection, ToolAdmission};
 use tools::{ToolInstances, ToolKey, ToolProjection, ToolProjectionAdmission};
 #[path = "tracker_transcript.rs"]
 mod transcript;
-use transcript::{LiveStreamReconstruction, TranscriptUpdate, UserProjection};
+use transcript::{InterjectionProjection, LiveStreamReconstruction, TranscriptUpdate, UserProjection};
 /// Convert a UTC millisecond timestamp to local time.
 fn utc_ms_to_local(ms: i64) -> Option<DateTime<Local>> {
     chrono::Utc
@@ -471,6 +471,7 @@ pub struct AcpUpdateTracker {
     transcript_events: HashMap<EntryId, String>,
     prompt_entries: HashMap<String, Vec<EntryId>>,
     user_projection: UserProjection,
+    interjection_entries: HashMap<String, InterjectionProjection>,
     stream_frontiers: HashMap<EntryId, u64>,
     replay_source_frontiers: HashMap<uuid::Uuid, u64>,
     live_stream_reconstruction: LiveStreamReconstruction,
@@ -2132,6 +2133,12 @@ impl AcpUpdateTracker {
         }
         if text.is_empty() {
             return false;
+        }
+        if let Some(identity) = chunk.meta.as_ref()
+            .and_then(|meta| meta.get("interjectionIdentity"))
+            .and_then(|value| serde_json::from_value::<xai_grok_sampling_types::InterjectionIdentity>(value.clone()).ok())
+        {
+            return self.project_interjection(&identity.id, &identity.display_text, scrollback);
         }
         let combined = combined_display_texts_from_chunk(&chunk);
         if !chunk_meta_flag(&chunk, user_message_chunk_meta::INTERJECTION)

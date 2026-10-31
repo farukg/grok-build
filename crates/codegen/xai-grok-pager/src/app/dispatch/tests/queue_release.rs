@@ -455,8 +455,10 @@ fn failed_flush_drops_trailing_echoes_before_requeue() {
         })
         .collect();
 
+    let binding = agent_ref(&app, AgentId(0)).current_actions_binding().unwrap();
     let _ = dispatch_task_result(
         TaskResult::InterjectFailed {
+            binding,
             agent_id: AgentId(0),
             error: "channel closed".into(),
             remaining,
@@ -511,8 +513,10 @@ fn failed_flush_drops_only_the_failed_identical_follow_up() {
         panic!("expected a flushed interject");
     };
 
+    let binding = agent_ref(&app, AgentId(0)).current_actions_binding().unwrap();
     let _ = dispatch_task_result(
         TaskResult::InterjectFailed {
+            binding,
             agent_id: AgentId(0),
             error: "channel closed".into(),
             remaining: vec![(first_text, first_id, None)],

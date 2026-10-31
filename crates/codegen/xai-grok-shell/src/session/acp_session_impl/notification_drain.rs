@@ -331,7 +331,7 @@ impl SessionActor {
     ) {
         if !self.restart_recovery_permitted() {
             let state = self.state.lock().await;
-            if !state.pending_inputs.front().is_some_and(|input|
+            if !state.pending_inputs.iter().any(|input|
                 matches!(input.input_origin.as_prompt_origin(), PromptOrigin::User)) {
                 return;
             }
@@ -640,17 +640,6 @@ impl SessionActor {
         };
         self.apply_tool_overrides_update(tool_overrides_update);
         self.observe_wait_input(input_origin.as_prompt_origin());
-        if input_origin.policy().authority.is_human_intent() {
-            self.set_completion_wake_policy(
-                crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-            );
-            state.notifications_suppressed = false;
-            xai_grok_telemetry::unified_log::info(
-                "shell.task_wake.gate_cleared",
-                Some(self.session_info.id.0.as_ref()),
-                Some(serde_json::json!({ "reason": "queued_user_promotion" })),
-            );
-        }
         {
             let mut current_prompt_id = self
                 .current_prompt_id
@@ -1356,6 +1345,7 @@ mod live_orphan_hook_tests {
         SubagentMeta {
             subagent_id: id.into(),
             recorded_owner: None,
+            recorded_spawner: None,
             attempt_id: None,
             parent_session_id: parent.into(),
             child_session_id: format!("child-{id}"),

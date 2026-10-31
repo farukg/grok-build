@@ -31,8 +31,13 @@ impl SessionActor {
         &self,
         text: String,
         images: Vec<acp::ImageContent>,
+        id: Option<String>,
         front: bool,
     ) {
+        let identity = id.map(|id| xai_grok_sampling_types::InterjectionIdentity {
+            id,
+            display_text: text.clone(),
+        });
         let prompt_id = format!("{INTERJECT_FALLBACK_PROMPT_PREFIX}{}", uuid::Uuid::now_v7());
         let mut prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
         prompt_blocks.extend(images.into_iter().map(acp::ContentBlock::Image));
@@ -55,7 +60,8 @@ impl SessionActor {
             screen_mode: None,
             verbatim: false,
             json_schema: None,
-            input_origin: InputOrigin::new(super::super::PromptOrigin::User),
+            input_origin: InputOrigin::new(super::super::PromptOrigin::User)
+                .with_interjection(identity),
             task_wake_fallback: None,
             tool_overrides_update: None,
             respond_to,
@@ -89,7 +95,7 @@ impl SessionActor {
         let count = stranded.len();
         // Reversed push_fronts keep entry 0 front-most.
         for entry in stranded.into_iter().rev() {
-            self.queue_interjection_fallback_prompt(entry.text, entry.attachments, true)
+            self.queue_interjection_fallback_prompt(entry.text, entry.attachments, entry.id, true)
                 .await;
         }
         count
@@ -150,9 +156,27 @@ impl SessionActor {
     /// Broadcast a mid-turn interjection to every attached client.
     /// The originator uses `id` to claim its optimistic prompt block; other clients render the notification normally.
     pub(super) fn broadcast_interjection(&self, text: &str, id: Option<&str>) {
+        let delivery = self.current_actions.delivery_role();
+        self.broadcast_interjection_with_delivery(text, id, &delivery);
+    }
+
+    pub(super) fn broadcast_interjection_with_delivery(
+        &self,
+        text: &str,
+        id: Option<&str>,
+        delivery: &crate::extensions::current_actions::DeliveryRole,
+    ) {
+        let mut meta = serde_json::Map::new();
+        self.stamp_current_actions_version(&mut meta);
+        if let Err(error) = crate::extensions::current_actions::stamp_delivery(&mut meta, delivery) {
+            self.notifications.gateway.fail_publication();
+            tracing::error!(%error, "interjection delivery serialization failed");
+            return;
+        }
         let mut payload = serde_json::json!({
             "sessionId": self.session_info.id.0.as_ref(),
             "text": text,
+            "meta": meta,
         });
         if let Some(id) = id
             && let Some(obj) = payload.as_object_mut()
@@ -207,7 +231,23 @@ impl SessionActor {
         images: &[acp::ImageContent],
         model_id: &str,
     ) {
+        self.persist_interjection_user_message_with_model(
+            text, interjection_display_text, images, model_id, None,
+        );
+    }
+
+    fn persist_interjection_user_message_with_model(
+        &self,
+        text: &str,
+        interjection_display_text: Option<&str>,
+        images: &[acp::ImageContent],
+        model_id: &str,
+        identity: Option<&xai_grok_sampling_types::InterjectionIdentity>,
+    ) {
         let mut user_chunk_meta = serde_json::Map::new();
+        if let Some(identity) = identity {
+            user_chunk_meta.insert("interjectionIdentity".into(), serde_json::json!(identity));
+        }
         user_chunk_meta.insert("modelId".into(), serde_json::json!(model_id));
         let mut text_block = acp::TextContent::new(text.to_string());
         if let Some(display_text) = interjection_display_text {
@@ -345,7 +385,7 @@ impl SessionActor {
         }
 
         let mut prepared = Vec::with_capacity(guard.entries.len());
-        for PendingInterjection { text, attachments } in &guard.entries {
+        for PendingInterjection { id, text, attachments } in &guard.entries {
             // The sanitizer rewrites `[Image #N: <path>]` to `[Image #N]` before the text reaches the model
             // It covers legacy-client raw text AND text harvested from queued rows sent as interjections
             // Wrapping and truncation stay in the shared crate (`format_interjection`)
@@ -368,18 +408,25 @@ impl SessionActor {
                 }
                 None => wrapped.clone(),
             };
+            let identity = id.as_ref().map(|id| xai_grok_sampling_types::InterjectionIdentity {
+                id: id.clone(),
+                display_text: sanitized.clone(),
+            });
             let mut item = ConversationItem::interjection(model_text);
+            if let ConversationItem::User(user) = &mut item {
+                user.interjection = identity.clone();
+            }
             for img in &images {
                 item.add_image(pick_user_image_url(img));
             }
-            prepared.push((wrapped, sanitized, images, item));
+            prepared.push((wrapped, sanitized, images, identity, item));
         }
         // Last await before the submit; from here persistence is deliberately synchronous so no
         // cancellation point can separate the submitted batch from its persisted user chunks
         let model_id = self.current_model_id().await;
         let (persist_parts, chat_items): (Vec<_>, Vec<_>) = prepared
             .into_iter()
-            .map(|(wrapped, typed, images, item)| ((wrapped, typed, images), item))
+            .map(|(wrapped, typed, images, identity, item)| ((wrapped, typed, images, identity), item))
             .unzip();
         if self
             .chat_state_handle
@@ -396,12 +443,13 @@ impl SessionActor {
         // Persist only after the submit succeeded: on the failure/cancel paths the entries go back
         // to the buffer and the fallback-prompt turn persists them, so persisting here too would
         // duplicate the user chunks in updates.jsonl
-        for (wrapped, typed, images) in persist_parts {
-            self.persist_synthetic_user_message_with_model(
+        for (wrapped, typed, images, identity) in persist_parts {
+            self.persist_interjection_user_message_with_model(
                 &wrapped,
                 Some(&typed),
                 &images,
                 &model_id,
+                identity.as_ref(),
             );
         }
         guard.defuse();
@@ -438,5 +486,68 @@ impl Drop for RestoreOnCancel {
             "interjection drain aborted before submit; restoring entries for a later drain or flush"
         );
         self.buffer.restore_front(std::mem::take(&mut self.entries));
+    }
+}
+
+#[cfg(test)]
+mod publication_binding_tests {
+    use super::*;
+    use crate::extensions::current_actions::{DeliveryRole, DELIVERY_META_KEY};
+    use crate::extensions::interject::capture_publication;
+    use crate::session::current_actions::SnapshotBinding;
+
+    #[tokio::test]
+    async fn command_echo_keeps_original_capture_after_same_incarnation_attach() {
+        tokio::task::LocalSet::new().run_until(async {
+            let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = crate::session::acp_session::support::create_test_actor(
+                0, 256_000, 85, gateway_tx, persistence_tx,
+            ).await;
+            let sid = actor.session_info.id.clone();
+            let reader = actor.current_actions.reader(Default::default(), sid.0.to_string());
+            let old = SnapshotBinding {
+                session_id: sid.0.to_string(), binding_epoch: 1, load_generation: 1,
+            };
+            assert!(capture_publication(&sid, &old, Some(&reader)).is_err());
+            assert!(capture_publication(&sid, &old, None).is_err());
+            let original = reader.bind_publication(old.clone()).unwrap();
+            let delivery = capture_publication(&sid, &old, Some(&reader)).unwrap();
+            let command = crate::session::SessionCommand::Interject {
+                text: "original payload".into(), id: Some("original-id".into()),
+                images: Vec::new(), delivery,
+            };
+            let new = SnapshotBinding { load_generation: 2, ..old.clone() };
+            let attached = reader.bind_publication(new.clone()).unwrap();
+            assert_eq!(original.incarnation, attached.incarnation);
+            assert!(capture_publication(&sid, &old, Some(&reader)).is_err());
+            let foreign = SnapshotBinding { session_id: "foreign".into(), ..new.clone() };
+            assert!(capture_publication(&sid, &foreign, Some(&reader)).is_err());
+            tokio::task::yield_now().await;
+            let crate::session::SessionCommand::Interject { text, id, images, delivery } = command else {
+                panic!("original Interject command");
+            };
+            assert!(images.is_empty());
+            actor.broadcast_interjection_with_delivery(&text, id.as_deref(), &delivery);
+            let current = capture_publication(&sid, &new, Some(&reader)).unwrap();
+            actor.broadcast_interjection_with_delivery("new payload", Some("new-id"), &current);
+            actor.broadcast_interjection_with_delivery("legacy", None, &DeliveryRole::Unavailable);
+            let mut echoes = Vec::new();
+            while let Ok(message) = gateway_rx.try_recv() {
+                if let xai_acp_lib::AcpClientMessage::ExtNotification(args) = message
+                    && args.request.method.as_ref() == "x.ai/session/interjection"
+                {
+                    echoes.push(serde_json::from_str::<serde_json::Value>(args.request.params.get()).unwrap());
+                }
+            }
+            assert_eq!(echoes.len(), 3);
+            assert_eq!(echoes[0]["text"], "original payload");
+            assert_eq!(echoes[0]["interjectionId"], "original-id");
+            assert_eq!(echoes[0]["meta"][DELIVERY_META_KEY], serde_json::to_value(DeliveryRole::Live { context: original }).unwrap());
+            assert_eq!(echoes[1]["text"], "new payload");
+            assert_eq!(echoes[1]["interjectionId"], "new-id");
+            assert_eq!(echoes[1]["meta"][DELIVERY_META_KEY], serde_json::to_value(DeliveryRole::Live { context: attached }).unwrap());
+            assert_eq!(echoes[2]["meta"][DELIVERY_META_KEY], serde_json::to_value(DeliveryRole::Unavailable).unwrap());
+        }).await;
     }
 }

@@ -773,6 +773,7 @@ impl JsonlStorageAdapter {
         )
         .map_err(|error| match error {
             AppendLineError::NotCommitted(source) => StrictAppendError::NotCommitted(source),
+            AppendLineError::Indeterminate(source) => StrictAppendError::Indeterminate(source),
             AppendLineError::Committed(source) => StrictAppendError::Committed {
                 acknowledgement: CompletionProjectionAck::Appended,
                 source,

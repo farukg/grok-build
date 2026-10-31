@@ -1336,6 +1336,13 @@ impl SessionActor {
                     })?,
                 );
             }
+            if let xai_chat_state::InjectedRequestRecord::Synthetic {
+                interjection: Some(identity), ..
+            } = record
+                && let Some(object) = meta.as_object_mut()
+            {
+                object.insert("interjectionIdentity".into(), serde_json::json!(identity));
+            }
             let notification = XaiSessionNotification {
                 session_id: self.session_info.id.clone(),
                 update: XaiSessionUpdate::InjectedContextRecord {

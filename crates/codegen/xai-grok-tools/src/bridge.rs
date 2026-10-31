@@ -485,6 +485,15 @@ impl ToolBridge {
         }
     }
 
+    pub async fn registered_completion_tasks(
+        &self,
+    ) -> Result<Vec<crate::computer::types::TaskSnapshot>, crate::computer::types::ComputerError> {
+        match &self.terminal {
+            Some(terminal) => terminal.registered_completion_tasks().await,
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Kill all foreground terminal commands.
     pub async fn kill_foreground_commands(&self) {
         if let Some(terminal) = &self.terminal {

@@ -23,7 +23,7 @@ use super::host_service::{
 use super::notify::WorkflowNotifySender;
 use super::registry::{ResolvedWorkflow, WorkflowSource, bundled_file_is_managed};
 use super::store::WorkflowRunStore;
-use super::tracker::{WorkflowCancellation, WorkflowRunState, WorkflowRunStatus, WorkflowTracker};
+use super::tracker::{WorkflowCancellation, WorkflowEpisodeId, WorkflowRunState, WorkflowRunStatus, WorkflowTracker};
 use crate::agent::remote_config::task_model_policy::LatchedTaskModelSelection;
 
 pub(crate) const WORKFLOW_MAX_ACTIVE_RUNS_PER_SESSION: usize = 4;
@@ -34,7 +34,13 @@ static WORKFLOW_RUNS_ACTIVE: xai_grok_telemetry::activity::ActivityGauge =
         xai_grok_telemetry::activity::WORKFLOW_RUNS_ACTIVE_KEY,
     );
 
+pub(crate) struct WorkflowStopAuthority {
+    pub completions: Vec<xai_chat_state::completion::CompletionIdentity>,
+    pub episodes: Vec<WorkflowEpisodeId>,
+}
+
 struct ActiveRun {
+    execution_epoch: u64,
     cancel: CancellationToken,
     pause_intent: Arc<AtomicBool>,
     done: oneshot::Receiver<()>,
@@ -58,6 +64,8 @@ pub(crate) enum LaunchError {
     Store(String),
     #[error("run is not resumable (status: {0})")]
     NotResumable(String),
+    #[error("workflow execution identity exhausted for {0}; start a new run")]
+    ExecutionEpochExhausted(String),
     #[error(
         "run is budget-limited at {used} of {limit} agents; resume it \
          with an agent_budget above {used}"
@@ -99,7 +107,7 @@ pub(crate) struct WorkflowManager {
     session_cmd_tx: mpsc::UnboundedSender<crate::session::commands::SessionCommand>,
     templates: HashMap<String, String>,
     active: HashMap<String, ActiveRun>,
-    retiring: Vec<(String, oneshot::Receiver<()>)>,
+    retiring: Vec<(WorkflowEpisodeId, oneshot::Receiver<()>)>,
     max_concurrent_agents: usize,
     /// `agent()` spawns carry the owning session's mode instead of reclassifying.
     task_model_selection: LatchedTaskModelSelection,
@@ -148,6 +156,30 @@ impl WorkflowManager {
     #[cfg(test)]
     pub(crate) fn test_set_max_concurrent_agents(&mut self, n: usize) {
         self.max_concurrent_agents = n.max(1);
+    }
+
+    pub(crate) fn registered_stop_authority(&self) -> WorkflowStopAuthority {
+        let states = self.tracker.lock().snapshot();
+        let mut episodes: Vec<_> = states.iter().map(WorkflowRunState::episode).collect();
+        for (run_id, run) in &self.active {
+            let episode = WorkflowEpisodeId {
+                run_id: run_id.clone(), execution_epoch: run.execution_epoch,
+            };
+            if !episodes.contains(&episode) {
+                episodes.push(episode);
+            }
+        }
+        for (episode, _) in &self.retiring {
+            if !episodes.contains(episode) {
+                episodes.push(episode.clone());
+            }
+        }
+        let completions = states.into_iter()
+            .filter(|run| run.status.is_completion_reportable())
+            .map(|run| xai_chat_state::completion::TerminalCompletionId::Workflow {
+                run_id: run.run_id, revision: run.revision,
+            }.into()).collect();
+        WorkflowStopAuthority { completions, episodes }
     }
 
     pub(crate) fn tracker(&self) -> Arc<parking_lot::Mutex<WorkflowTracker>> {
@@ -230,6 +262,9 @@ impl WorkflowManager {
                     tracker.resume_run(run_id, spec.agent_budget)
                 }
                 .ok_or_else(|| {
+                    if existing.execution_epoch == u64::MAX {
+                        return LaunchError::ExecutionEpochExhausted(run_id.clone());
+                    }
                     if existing.status
                         == crate::session::workflow::tracker::WorkflowRunStatus::BudgetLimited
                     {
@@ -333,7 +368,7 @@ impl WorkflowManager {
                 scratch_dir,
                 tracker: self.tracker.clone(),
                 store: self.store.clone(),
-                notify: self.notify.clone(),
+                notify: self.notify.for_episode(state.episode()),
                 subagent_event_tx: self.subagent_event_tx.clone(),
                 parent_session_id: self.session_id.clone(),
                 allow_fork_context,
@@ -366,6 +401,7 @@ impl WorkflowManager {
         self.active.insert(
             run_id.clone(),
             ActiveRun {
+                execution_epoch: state.execution_epoch,
                 cancel: cancel.clone(),
                 pause_intent: pause_intent.clone(),
                 done: done_rx,
@@ -382,7 +418,7 @@ impl WorkflowManager {
         let watcher_session_id = self.session_id.clone();
         let watcher_agent_stats = agent_stats;
         let watcher_workflow_name = workflow_name;
-        let execution_epoch = self.tracker.lock().execution_epoch(&run_id).unwrap_or(0);
+        let execution_epoch = state.execution_epoch;
         tokio::spawn(async move {
             let _active = active;
             let _work = work;
@@ -593,7 +629,9 @@ impl WorkflowManager {
             .collect();
         for run_id in terminal {
             if let Some(run) = self.active.remove(&run_id) {
-                self.retiring.push((run_id.to_owned(), run.done));
+                self.retiring.push((WorkflowEpisodeId {
+                    run_id: run_id.to_owned(), execution_epoch: run.execution_epoch,
+                }, run.done));
             }
         }
 
@@ -610,7 +648,9 @@ impl WorkflowManager {
             .get(run_id)
             .is_some_and(|s| s.status.is_terminal());
         if terminal && let Some(run) = self.active.remove(run_id) {
-            self.retiring.push((run_id.to_owned(), run.done));
+            self.retiring.push((WorkflowEpisodeId {
+                run_id: run_id.to_owned(), execution_epoch: run.execution_epoch,
+            }, run.done));
         }
         terminal
     }
@@ -642,7 +682,9 @@ impl WorkflowManager {
         run.pause_intent.store(true, Ordering::Relaxed);
         run.cancel.cancel();
         let _ = self.cancel_children_for_run(run_id);
-        self.retiring.push((run_id.to_owned(), run.done));
+        self.retiring.push((WorkflowEpisodeId {
+            run_id: run_id.to_owned(), execution_epoch: run.execution_epoch,
+        }, run.done));
         let paused = {
             let mut tracker = self.tracker.lock();
             let active = tracker
@@ -678,7 +720,9 @@ impl WorkflowManager {
         if let Some(run) = self.active.remove(run_id) {
             run.cancel.cancel();
             let _ = self.cancel_children_for_run(run_id);
-            self.retiring.push((run_id.to_owned(), run.done));
+            self.retiring.push((WorkflowEpisodeId {
+                run_id: run_id.to_owned(), execution_epoch: run.execution_epoch,
+            }, run.done));
             let state = {
                 let mut tracker = self.tracker.lock();
                 match tracker.get(run_id) {
@@ -793,7 +837,7 @@ impl WorkflowManager {
         pending.extend(
             self.retiring
                 .drain(..)
-                .map(|(run_id, done)| (Some(run_id), done)),
+                .map(|(episode, done)| (Some(episode.run_id), done)),
         );
 
         let mut timed_out = Vec::new();
@@ -845,9 +889,11 @@ impl WorkflowManager {
 
     #[cfg(test)]
     pub(crate) fn test_insert_active_run(&mut self, run_id: String, done: oneshot::Receiver<()>) {
+        let execution_epoch = self.tracker.lock().execution_epoch(&run_id).expect("active test run must be tracked");
         self.active.insert(
             run_id,
             ActiveRun {
+                execution_epoch,
                 cancel: CancellationToken::new(),
                 pause_intent: Arc::new(AtomicBool::new(false)),
                 done,
@@ -977,11 +1023,11 @@ mod tests {
                 match event {
                     SubagentEvent::Cancel(request) => {
                         cancels_stub.lock().push(request.target.clone());
-                        let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled {
+                        let _ = request.respond_to.send(Ok(SubagentCancelOutcome::Cancelled {
                             cause: InterruptionCause::ExplicitStop {
                                 actor: SubagentActor::Human,
                             },
-                        });
+                        }));
                     }
                     other => {
                         if event_tx.send(other).is_err() {
@@ -1692,7 +1738,7 @@ mod tests {
             let (done_tx, done_rx) = oneshot::channel();
             manager
                 .retiring
-                .push((format!("retiring-{index}"), done_rx));
+                .push((WorkflowEpisodeId { run_id: format!("retiring-{index}"), execution_epoch: 0 }, done_rx));
             done_senders.push(done_tx);
             assert_eq!(manager.retiring.len(), index + 1);
         }

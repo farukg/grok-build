@@ -3,6 +3,7 @@ use super::*;
 impl SessionActor {
     pub(super) fn restart_recovery_permitted(&self) -> bool {
         self.tool_context.restart_recovery.admission().permits_recovery()
+            && !self.tool_context.task_wake_suppressed.as_ref().is_some_and(|gate| gate.get())
     }
 
     pub(super) async fn cancel_stale_session_work(&self) -> Result<(), acp::Error> {
@@ -10,7 +11,7 @@ impl SessionActor {
             xai_grok_tools::types::restart_recovery::RestartAdmission::NewSession { .. }) {
             self.persist_restart_admission(self.tool_context.restart_recovery.admission()).await?;
         }
-        if self.restart_recovery_permitted() {
+        if self.tool_context.restart_recovery.admission().permits_recovery() {
             return Ok(());
         }
         if let Some(event_tx) = self.tool_context.subagent_event_tx.clone() {
@@ -23,7 +24,10 @@ impl SessionActor {
                 SubagentCancelOutcome::Cancelled { .. }
                 | SubagentCancelOutcome::AlreadyFinished { .. } => {},
                 SubagentCancelOutcome::NotFound => return Err(restart_owner_closed()),
-                SubagentCancelOutcome::CustodyUnavailable { target_id } => {
+                SubagentCancelOutcome::CustodyUnavailable { target_id }
+                | SubagentCancelOutcome::ControlOwnerUnavailable { target_id }
+                | SubagentCancelOutcome::WorkflowOwned { target_id, .. }
+                | SubagentCancelOutcome::TargetChanged { target_id } => {
                     return Err(acp::Error::internal_error().data(format!(
                         "Subagent '{target_id}' cancellation not confirmed: execution custody is unavailable"
                     )));
@@ -121,7 +125,10 @@ async fn reactivate(
     let state = completion_state(persistence).await?;
     if !state.receiver.recoverable_ids().is_empty()
         || state.obligations.iter().any(|obligation| !matches!(obligation,
-            crate::session::completion_delivery::CompletionObligation::Suppressed { .. }))
+            crate::session::completion_delivery::CompletionObligation::Suppressed { .. }
+            | crate::session::completion_delivery::CompletionObligation::Preparing {
+                admission: crate::session::completion_delivery::CompletionAdmission::Suppressed(_), ..
+            }))
     {
         return Err(acp::Error::internal_error().data("stale restart work has not durably settled"));
     }

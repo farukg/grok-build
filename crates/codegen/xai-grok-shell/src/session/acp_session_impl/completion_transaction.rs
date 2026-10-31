@@ -201,6 +201,9 @@ impl SessionActor {
                 .persisted_completion_state()
                 .await
                 .map_err(xai_chat_state::StrictAppendError::NotCommitted)?;
+            if state.wake_policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped {
+                return Ok(changed);
+            }
             let mut fresh = Vec::new();
             let mut recovery = Vec::new();
             let mut settled = Vec::new();

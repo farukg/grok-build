@@ -1,3 +1,8 @@
+#[path = "stop_producer_tests.rs"]
+mod stop_producer;
+#[path = "workflow_stop_tests.rs"]
+mod workflow_stop;
+
 use super::*;
 use crate::session::completion_delivery::{CompletionObligation, CompletionSuppression};
 use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
@@ -6,6 +11,145 @@ async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::time::timeout(std::time::Duration::from_secs(10), future)
         .await
         .expect("suppression barrier timed out")
+}
+
+#[derive(Clone, Copy)]
+enum StopFixturePhase { Preparing, Pending, Projected }
+
+async fn seed_stop_fixture(
+    storage: &JsonlStorageAdapter,
+    info: &crate::session::info::Info,
+    phase: StopFixturePhase,
+) -> crate::session::SubagentCompletionEvent {
+    use crate::session::completion_delivery::{CompletionArtifacts, CompletionEventPolicy};
+    let event = crate::session::SubagentCompletionEvent {
+        id: xai_chat_state::SubagentCompletionId {
+            subagent_id: "stopped-original-child".into(),
+            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+        },
+        state: xai_grok_tools::implementations::grok_build::task::types::SubagentState::Completed,
+        text: "original producer result".into(), output: "original producer result".into(),
+        child_session_id: "original-child-session".into(), tool_calls: 1, turns: 1,
+        duration_ms: 526010, tokens_used: 7, completed_at: chrono::Utc::now(),
+        policy: CompletionEventPolicy::Automatic, artifacts: CompletionArtifacts::None,
+    };
+    storage.prepare_subagent_completion(info, event.clone()).await.unwrap();
+    match phase {
+        StopFixturePhase::Preparing => {}
+        StopFixturePhase::Pending | StopFixturePhase::Projected => {
+            storage.publish_subagent_completion(info, &event, true).await.unwrap();
+        }
+    }
+    if matches!(phase, StopFixturePhase::Projected) {
+        storage.append_completion_commit_aware(info,
+            &xai_chat_state::CompletionProjection::new(event.id.clone(), "original-wake".into(), event.text.clone()),
+            &xai_chat_state::InputAdmission {
+                parent_task: xai_chat_state::ParentTask::Instance { id: "original-consumer".into() },
+                cancellation: tokio_util::sync::CancellationToken::new(),
+            },
+        ).await.unwrap();
+    }
+    event
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stopped_preparing_pending_and_projected_stay_sealed_after_new_authority() {
+    use crate::session::completion_delivery::{CompletionAdmission, CompletionWakePolicy};
+    tokio::task::LocalSet::new().run_until(async {
+        for phase in [StopFixturePhase::Preparing, StopFixturePhase::Pending, StopFixturePhase::Projected] {
+            let directory = tempfile::tempdir().unwrap();
+            let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+            let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
+            storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
+            let event = seed_stop_fixture(storage.as_ref(), &info, phase).await;
+            let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
+            let owner = tokio_util::task::AbortOnDropHandle::new(persistence.task);
+            let (gateway, _notifications) = mpsc::unbounded_channel();
+            let actor = super::super::super::support::create_test_actor(0, 256_000, 85, gateway, persistence.handle.tx.clone()).await;
+            let stopped = actor.cancel_running_task(crate::session::CancelOptions {
+                trigger: Some(crate::session::CancelTrigger::CtrlC), user_initiated: true, ..Default::default()
+            }).await;
+            assert!(stopped.settled);
+            assert!(matches!(stopped.policy, crate::session::acp_session::cancel::StopPolicyCommit::Committed));
+            let sealed = actor.persisted_completion_state().await.unwrap();
+            if matches!(phase, StopFixturePhase::Preparing) {
+                assert!(matches!(&sealed.obligations[0], CompletionObligation::Preparing {
+                    event: original, admission: CompletionAdmission::Suppressed(CompletionSuppression::HumanStopped)
+                } if original.id == event.id && original.state == event.state));
+                storage.publish_subagent_completion(&info, &event, false).await.unwrap();
+            }
+            drop(actor);
+            drop(owner);
+            let reopened = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
+            let recovered = reopened.recover_subagent_completions(&info).await.unwrap();
+            assert_eq!(recovered.completion_delivery.wake_policy, CompletionWakePolicy::HumanStopped);
+            let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), reopened.clone());
+            let _owner = tokio_util::task::AbortOnDropHandle::new(persistence.task);
+            let (gateway, _notifications) = mpsc::unbounded_channel();
+            let actor = super::super::super::support::create_test_actor(0, 256_000, 85, gateway, persistence.handle.tx.clone()).await;
+            actor.restore_completion_wake_policy(recovered.completion_delivery.wake_policy).await;
+            actor.clear_wake_suppression(crate::session::acp_session::cancel::WakeReengagement::NewHumanMessage).await.unwrap();
+            let state = actor.persisted_completion_state().await.unwrap();
+            assert_eq!(state.wake_policy, CompletionWakePolicy::Automatic);
+            assert!(matches!(&state.obligations[0], CompletionObligation::Suppressed {
+                id, reason: CompletionSuppression::HumanStopped, ..
+            } if id == &event.id));
+            if matches!(phase, StopFixturePhase::Projected) {
+                assert_eq!(state.receipts[0].prompt_id, "original-wake");
+            }
+            assert!(actor.state.lock().await.running_task.is_none());
+        }
+    }).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn unstopped_projected_receipt_remains_a_recoverable_obligation() {
+    let directory = tempfile::tempdir().unwrap();
+    let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+    let storage = JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
+    storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
+    let event = seed_stop_fixture(&storage, &info, StopFixturePhase::Projected).await;
+    let reopened = JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
+    let recovered = reopened.recover_subagent_completions(&info).await.unwrap();
+    assert!(matches!(&recovered.completion_delivery.obligations[0], CompletionObligation::Projected { receipt, .. }
+        if receipt.completion == event.id && receipt.prompt_id == "original-wake"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn explicit_stop_survives_durable_read_and_recreated_actor() {
+    use crate::session::completion_delivery::CompletionWakePolicy;
+    tokio::task::LocalSet::new().run_until(async {
+        let directory = tempfile::tempdir().unwrap();
+        let info = crate::session::info::Info {
+            id: acp::SessionId::new("test-actor"), cwd: "/tmp".into(),
+        };
+        let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
+        storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
+        let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
+        let _owner = tokio_util::task::AbortOnDropHandle::new(persistence.task);
+        let (gateway, _notifications) = mpsc::unbounded_channel();
+        let actor = super::super::super::support::create_test_actor(0, 256_000, 85, gateway, persistence.handle.tx.clone()).await;
+        let outcome = actor.cancel_running_task(crate::session::CancelOptions {
+            trigger: Some(crate::session::CancelTrigger::CtrlC),
+            user_initiated: true, ..Default::default()
+        }).await;
+        assert_eq!(outcome.barrier, crate::session::acp_session::cancel::WakeBarrier::Armed);
+        let durable = actor.persisted_completion_state().await.unwrap();
+        assert_eq!(durable.wake_policy, CompletionWakePolicy::HumanStopped);
+        drop(actor);
+        for _ in 0..3 {
+            let (gateway, _notifications) = mpsc::unbounded_channel();
+            let actor = Arc::new(super::super::super::support::create_test_actor(0, 256_000, 85, gateway, persistence.handle.tx.clone()).await);
+            actor.restore_completion_wake_policy(durable.wake_policy).await;
+            assert!(!actor.restart_recovery_permitted());
+            actor.clear_wake_suppression(crate::session::acp_session::cancel::WakeReengagement::GoalResume).await.unwrap();
+            assert!(actor.state.lock().await.notifications_suppressed);
+            let (completion, _results) = mpsc::unbounded_channel();
+            SessionActor::maybe_start_running_task(actor.clone(), completion).await;
+            assert!(actor.state.lock().await.running_task.is_none());
+            assert_eq!(actor.persisted_completion_state().await.unwrap().wake_policy, CompletionWakePolicy::HumanStopped);
+        }
+    }).await;
 }
 
 #[tokio::test(flavor = "current_thread")]

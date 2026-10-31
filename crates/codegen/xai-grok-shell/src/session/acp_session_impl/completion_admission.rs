@@ -86,19 +86,28 @@ impl SessionActor {
         })
     }
 
-    pub(super) fn set_completion_wake_policy(
+    pub(super) async fn set_completion_wake_policy(
         &self,
         policy: crate::session::completion_delivery::CompletionWakePolicy,
-    ) {
-        if let Some(gate) = &self.tool_context.task_wake_suppressed {
-            gate.set(
-                policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped,
-            );
+    ) -> std::io::Result<()> {
+        use crate::session::completion_delivery::CompletionWakePolicy;
+        if policy == CompletionWakePolicy::HumanStopped {
+            if let Some(gate) = &self.tool_context.task_wake_suppressed {
+                gate.set(true);
+            }
+            self.state.lock().await.notifications_suppressed = true;
         }
-        let _ = self
-            .notifications
-            .persistence_tx
-            .send(PersistenceMsg::CompletionWakePolicy(policy));
+        let (respond_to, receive) = oneshot::channel();
+        self.notifications.persistence_tx
+            .send(PersistenceMsg::CompletionWakePolicy { policy, respond_to })
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Stop policy persistence owner closed"))?;
+        receive.await.map_err(|_| std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe, "Stop policy commit acknowledgement lost",
+        ))??;
+        if let Some(gate) = &self.tool_context.task_wake_suppressed {
+            gate.set(policy == CompletionWakePolicy::HumanStopped);
+        }
+        Ok(())
     }
 
     pub(super) async fn project_subagent_completion(

@@ -908,7 +908,9 @@ impl SessionActor {
                 None => ResumeTransition::NoGoal,
             }
         };
-        self.clear_wake_suppression("goal_resume").await;
+        if let Err(error) = self.clear_wake_suppression(super::cancel::WakeReengagement::GoalResume).await {
+            return GoalResumeOutcome::Message(error.to_string());
+        }
         self.set_goal_loop_active_resource(false).await;
         self.break_declared_wait();
         let was_resumed = matches!(transition, ResumeTransition::Resumed { .. });

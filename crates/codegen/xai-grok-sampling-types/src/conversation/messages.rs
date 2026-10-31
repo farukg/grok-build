@@ -1,4 +1,5 @@
 use super::*;
+use crate::instruction_projection::{InstructionContentEncoding, ProviderInstructionPath, ProviderInstructionPlan};
 
 /// Marks the last block that can carry one, scanning back past `Thinking`, which the API rejects a breakpoint on.
 fn mark_message_cache_breakpoint(msg: &mut crate::messages::Message) -> bool {
@@ -73,11 +74,16 @@ fn apply_cache_breakpoints(
 }
 
 pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::MessagesRequest {
+    messages_request_with_instructions(req).0
+}
+
+pub fn messages_request_with_instructions(req: &ConversationRequest) -> (crate::messages::MessagesRequest, ProviderInstructionPlan) {
     use crate::messages::{
         ContentBlock, ImageSource, Message, MessageContent, MessageRole, MessagesRequest,
         OutputConfig, SystemParam, TextBlock, ToolChoiceParam, ToolParam, ToolResultContent,
     };
 
+    let mut plan = ProviderInstructionPlan::new(crate::ApiBackend::Messages);
     let mut system_blocks: Vec<TextBlock> = Vec::new();
     let mut messages: Vec<Message> = Vec::new();
     let mut pending_assistant: Vec<ContentBlock> = Vec::new();
@@ -169,6 +175,7 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
             ConversationItem::System(s) => {
                 flush_assistant(&mut pending_assistant, &mut messages);
                 flush_tool_results(&mut pending_tool_results, &mut messages);
+                plan.record_item(item, ProviderInstructionPath::MessagesSystem { index: system_blocks.len() }, InstructionContentEncoding::Blocks);
                 system_blocks.push(TextBlock {
                     r#type: "text".to_string(),
                     text: s.content.as_ref().to_owned(),
@@ -178,6 +185,7 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
             ConversationItem::User(u) => {
                 flush_assistant(&mut pending_assistant, &mut messages);
                 flush_tool_results(&mut pending_tool_results, &mut messages);
+                plan.record_item(item, ProviderInstructionPath::MessagesContent { index: messages.len(), block: 0 }, InstructionContentEncoding::Blocks);
                 let blocks = content_parts_to_anthropic_blocks(&u.content);
                 messages.push(Message {
                     role: MessageRole::User,
@@ -332,7 +340,7 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
         None
     };
 
-    MessagesRequest {
+    let request = MessagesRequest {
         model: req.model.clone().unwrap_or_default(),
         messages,
         max_tokens: req.max_output_tokens.unwrap_or(0),
@@ -347,7 +355,9 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
         thinking,
         output_config,
         metadata: None,
-    }
+    };
+    plan.instructions.sort_by_key(|instruction| instruction.reference.path);
+    (request, plan)
 }
 
 /// `Thinking` is dropped because this `From` returns a single item; the streaming consumer emits the sibling `Reasoning` item instead.

@@ -108,6 +108,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 .graph
                 .insert_root_child(&id, &request.parent_session_id),
         }
+        let _ = self.current_target_incarnation(&id);
         self.inherit_resume_subagent_type(request.as_mut());
         let running = self.session_running_count(&request.parent_session_id);
         match self.admission.admit(&request, running) {
@@ -192,6 +193,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         request: &mut SubagentRequest,
     ) -> Result<Option<NestedSpawner>, SubagentResult> {
         let Some(spawner) = self.active_child_for_session(&request.parent_session_id) else {
+            request.recorded_spawner = Some(super::super::inventory::RecordedSubagentSpawner::Root);
             return Ok(None);
         };
         if spawner.cancellation.is_cancelled() {
@@ -205,6 +207,10 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 },
             ));
         }
+        request.recorded_spawner = Some(super::super::inventory::RecordedSubagentSpawner::Child {
+            subagent_id: spawner.request.id.clone(),
+            session_id: request.parent_session_id.clone(),
+        });
         let root_parent = spawner.request.parent_session_id.clone();
         let spawner_session_id = std::mem::replace(&mut request.parent_session_id, root_parent);
         // The request's flag becomes root-scoped; the spawner's wish lives on the graph node.
@@ -264,6 +270,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         since: std::time::Instant,
     ) {
         let id = request.id.clone();
+        let _ = self.current_target_incarnation(&id);
         drop(request.spawn_root.take_span());
         self.pending.insert(
             id.clone(),

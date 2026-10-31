@@ -44,7 +44,9 @@ impl SessionActor {
             Some(reason) => (CancelOutcome::noop(), WakeCancelSettlement::Unresolved { reason }),
             None => {
                 let outcome = self.cancel_running_task_inner(options, parent_request).await;
-                let settlement = if self.current_actions.removed_wake(&prompt_id) {
+                let settlement = if matches!(&outcome.policy, StopPolicyCommit::Failed(_)) {
+                    WakeCancelSettlement::Unresolved { reason: WakeCancelFailure::PersistenceUnavailable }
+                } else if self.current_actions.removed_wake(&prompt_id) {
                     WakeCancelSettlement::RemovedFromQueue
                 } else {
                     self.read_wake_terminal(&prompt_id).await

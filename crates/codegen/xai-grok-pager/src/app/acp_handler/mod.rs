@@ -214,7 +214,16 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         notif.response_tx.send(Ok(())).ok();
                         return false;
                     };
-                    if !agent.accepts_current_source(&meta) {
+                    let interjection_id = match &notif.request.update {
+                        acp::SessionUpdate::UserMessageChunk(chunk) => chunk.meta.as_ref()
+                            .and_then(|meta| meta.get("interjectionIdentity"))
+                            .and_then(|value| serde_json::from_value::<xai_grok_sampling_types::InterjectionIdentity>(value.clone()).ok())
+                            .map(|identity| identity.id),
+                        _ => None,
+                    };
+                    if !agent.accepts_current_source(&meta)
+                        || (interjection_id.is_some() && !agent.accepts_interjection_publication(&meta))
+                    {
                         notif.response_tx.send(Ok(())).ok();
                         return false;
                     }
@@ -466,11 +475,14 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             && user_message_text(&update).is_some_and(|text| {
                                 agent.take_send_now_user_echo(text, meta.prompt_id.as_deref())
                             });
-                        let changed = if swallow_send_now_echo {
+                        let mut changed = if swallow_send_now_echo {
                             false
                         } else {
                             agent.handle_admitted_acp_update(update, &meta)
                         };
+                        if let Some(id) = interjection_id.as_deref() {
+                            changed |= agent.accept_interjection_projection(id);
+                        }
                         if meta.is_replay
                             && let Some(pid) = meta.prompt_id.as_ref()
                         {
@@ -804,10 +816,15 @@ fn handle_interjection(notif: &acp::ExtNotification, app: &mut AppView) -> bool 
     let Some(agent) = app.agents.get_mut(&id) else {
         return false;
     };
+    let meta = NotificationMeta::from_json(parsed.get("meta").and_then(serde_json::Value::as_object));
+    if !agent.accepts_interjection_publication(&meta) {
+        return false;
+    }
     if let Some(iid) = interjection_id {
         if agent.self_interjection_ids.remove(iid) {
-            agent.interjection_painted_blocks.remove(iid);
-            agent.interjection_retry_images.remove(iid);
+            if let Some(entry) = agent.interjection_painted_blocks.get(iid).copied() {
+                agent.session.tracker.bind_interjection(iid, entry);
+            }
             return false;
         }
         if agent.is_self_originated_prompt(iid)
@@ -823,8 +840,14 @@ fn handle_interjection(notif: &acp::ExtNotification, app: &mut AppView) -> bool 
             {
                 block.is_interjection = true;
             }
+            agent.session.tracker.bind_interjection(iid, entry_id);
             return false;
         }
+    }
+    if let Some(iid) = interjection_id {
+        let projected = agent.session.tracker.project_interjection(iid, text, &mut agent.scrollback);
+        let retired = agent.accept_interjection_projection(iid);
+        return (projected || retired) && is_active;
     }
     agent
         .scrollback

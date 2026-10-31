@@ -22,6 +22,7 @@ use xai_grok_telemetry::region;
 use xai_grok_telemetry::region::Parent;
 use xai_grok_telemetry::subagent_spawn::{SubagentSpawnPhase, phase_region};
 use xai_grok_tools::implementations::grok_build::task::model_policy;
+use xai_grok_tools::implementations::grok_build::task::inventory::RecordedSubagentOwner;
 use xai_grok_tools::implementations::grok_build::task::native_recovery::{
     ArtifactCapabilityRef, NativeWakeCustody, NativeWakeLaunch, NativeWakeMode, RecoveryPublication,
 };
@@ -1148,6 +1149,7 @@ pub(crate) async fn run_shell_child(
                 run_id: run_id.clone(),
             },
         }),
+        recorded_spawner: request.recorded_spawner.clone(),
         attempt_id: attempt_id.clone(),
         parent_session_id: ctx.parent_session_id.clone(),
         child_session_id: child_session_id.0.to_string(),

@@ -334,7 +334,7 @@ fn release_queued_prompt_from(app: &mut AppView, agent_id: Option<AgentId>) -> V
             "prompt_len": queued.text.len(),
         })),
     );
-    super::interject::dispatch_interject_from_held_queue(app, id, queued.text, queued.images)
+    super::interject::dispatch_interject_from_held_queue(app, id, queued.text, queued.images, queued.interjection.map(|identity| identity.id))
 }
 
 /// `notices` is `AppView::pending_image_notices`: a queued image that cannot be read is reported there.
@@ -433,6 +433,15 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
         Some(q) => q,
         None => return QueueDrain::blocked(),
     };
+
+    if let Some(identity) = queued.interjection {
+        return QueueDrain {
+            effects: super::interject::prepare_interjection(
+                agent, queued.text, queued.images, Some(identity.id), notices,
+            ).into_iter().collect(),
+            page_flip_entry: None,
+        };
+    }
 
     if admit_compact && (agent.session.state.is_turn_running() || agent.running_wake_turn.is_some())
     {

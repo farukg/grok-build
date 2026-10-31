@@ -435,6 +435,10 @@ pub trait TerminalBackend: Send + Sync {
     /// Used for context compaction to include task state in summaries.
     async fn list_tasks(&self) -> Vec<TaskSnapshot>;
 
+    async fn registered_completion_tasks(&self) -> Result<Vec<TaskSnapshot>, ComputerError> {
+        Err(ComputerError::io("terminal completion registry acknowledgement is unsupported"))
+    }
+
     /// Metadata-only listing for durable background_tasks snapshots.
     /// Skips log reads and omits stdout; default clears output after
     /// [`Self::list_tasks`].

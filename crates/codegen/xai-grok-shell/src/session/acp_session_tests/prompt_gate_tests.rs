@@ -198,6 +198,53 @@ async fn hold_suppresses_idle_injection() {
         .await;
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn genuine_human_intake_releases_hook_hold_without_reopening_stop() {
+    use crate::session::completion_delivery::CompletionWakePolicy;
+
+    tokio::task::LocalSet::new().run_until(async {
+        for policy in [CompletionWakePolicy::Automatic, CompletionWakePolicy::HumanStopped] {
+            let (gateway_tx, _gateway_rx) = mpsc::unbounded_channel();
+            let (persistence_tx, mut persistence_rx) = mpsc::unbounded_channel();
+            let actor = Arc::new(create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await);
+            let stopped = policy == CompletionWakePolicy::HumanStopped;
+            actor.tool_context.task_wake_suppressed.as_ref().unwrap().set(stopped);
+            {
+                let mut state = actor.state.lock().await;
+                state.notifications_suppressed = stopped;
+                state.arm_hook_block_hold();
+            }
+            let (synthetic_tx, _synthetic_rx) = oneshot::channel();
+            assert!(!actor.queue_input(queue_input_request(
+                text_prompt("old completion"), "task-completed-hook-parked", synthetic_tx,
+            )).await);
+            assert!(actor.state.lock().await.hook_block_held());
+            let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
+            actor.clone().maybe_start_running_task(completion_tx.clone()).await;
+            assert!(actor.state.lock().await.running_task.is_none());
+
+            let (human_tx, _human_rx) = oneshot::channel();
+            assert!(!actor.queue_input(queue_input_request(
+                text_prompt("new genuine input"), "p-human-after-hook", human_tx,
+            )).await);
+            assert!(!actor.state.lock().await.hook_block_held());
+            // Keep this single-row promotion off the optional queue-combining path.
+            actor.state.lock().await.pending_inputs.retain(|input| input.prompt_id == "p-human-after-hook");
+            actor.clone().maybe_start_running_task(completion_tx).await;
+            let state = actor.state.lock().await;
+            assert_eq!(state.running_prompt_id(), Some("p-human-after-hook"));
+            assert_eq!(state.notifications_suppressed, stopped);
+            assert_eq!(actor.tool_context.task_wake_suppressed.as_ref().unwrap().get(), stopped);
+            state.running_task.as_ref().unwrap().abort();
+            drop(state);
+            while let Ok(message) = persistence_rx.try_recv() {
+                assert!(!matches!(message, PersistenceMsg::CompletionWakePolicy { .. }),
+                    "intake and promotion must not write Stop authority");
+            }
+        }
+    }).await;
+}
+
 /// A stranded interjection flushed after a blocked turn stays queued under the hold.
 /// It was typed before the block verdict was visible, so it must not auto-run as if the blocked prompt had succeeded.
 #[tokio::test(flavor = "current_thread")]
@@ -215,6 +262,7 @@ async fn flushed_interjection_stays_parked_under_hold() {
             actor
                 .pending_interjections
                 .push(crate::session::acp_session::PendingInterjection {
+                    id: None,
                     text: "steer text typed during the blocked turn".to_string(),
                     attachments: vec![],
                 });

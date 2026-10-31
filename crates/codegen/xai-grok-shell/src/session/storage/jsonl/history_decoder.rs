@@ -43,6 +43,7 @@ struct RejectedImages {
 
 pub struct DecodedHistory {
     pub(super) items: Vec<ConversationItem>,
+    pub(super) interjections: Result<xai_chat_state::interjection::InterjectionIndex, xai_chat_state::interjection::ReceiptError>,
     dropped: Vec<DroppedLine>,
     images: Vec<RejectedImages>,
     legacy_issues: Vec<HistoryIssue>,
@@ -51,6 +52,10 @@ pub struct DecodedHistory {
 }
 
 impl DecodedHistory {
+    pub fn interjections(&self) -> Result<&xai_chat_state::interjection::InterjectionIndex, xai_chat_state::interjection::ReceiptError> {
+        self.interjections.as_ref().map_err(|error| *error)
+    }
+
     pub fn items(&self) -> &[ConversationItem] {
         &self.items
     }
@@ -175,6 +180,15 @@ pub fn decode_history_bounded(
     chat_format_version: u8,
     limits: HistoryLimits,
 ) -> Result<DecodedHistory, HistoryDecodeLimit> {
+    decode_history_with_interjections(contents, chat_format_version, limits, Default::default())
+}
+
+pub(super) fn decode_history_with_interjections(
+    contents: &[u8],
+    chat_format_version: u8,
+    limits: HistoryLimits,
+    interjections: xai_chat_state::interjection::InterjectionIndex,
+) -> Result<DecodedHistory, HistoryDecodeLimit> {
     let max_items = limits.items;
     let mut diagnostics = Diagnostics {
         observed: 0,
@@ -183,6 +197,7 @@ pub fn decode_history_bounded(
     let mut sibling_btc_ids_seen = HashSet::new();
     let mut decoded = DecodedHistory {
         items: Vec::new(),
+        interjections: Ok(interjections),
         dropped: Vec::new(),
         images: Vec::new(),
         legacy_issues: Vec::new(),
@@ -194,7 +209,7 @@ pub fn decode_history_bounded(
         if line.is_empty() {
             continue;
         }
-        let raw: serde_json::Value = match serde_json::from_slice(line) {
+        let mut raw: serde_json::Value = match serde_json::from_slice(line) {
             Ok(raw) => raw,
             Err(error) => {
                 diagnostics.issue(line_idx + 1)?;
@@ -205,6 +220,45 @@ pub fn decode_history_bounded(
                 continue;
             }
         };
+        if raw.get("interjection_projection").is_some() {
+            let projection = serde_json::from_value::<super::interjection::ProjectionRecord>(raw.clone())
+                .map_err(|_| xai_chat_state::interjection::ReceiptError::InvalidRecord)
+                .and_then(|record| record.interjection_projection.into_parts());
+            match projection {
+                Ok((receipt, items)) => {
+                    use xai_chat_state::interjection::ReceiptRestore;
+                    let restored = match &mut decoded.interjections {
+                        Ok(index) => index.restore(receipt),
+                        Err(_) => continue,
+                    };
+                    match restored {
+                        Ok(ReceiptRestore::New | ReceiptRestore::Transition) => {}
+                        Ok(ReceiptRestore::AlreadyPresent) => continue,
+                        Err(error) => { decoded.interjections = Err(error); continue; }
+                    }
+                    let Some(item) = items.into_iter().next() else { continue; };
+                    match serde_json::to_value(item) {
+                        Ok(item) => raw = item,
+                        Err(_) => { decoded.interjections = Err(xai_chat_state::interjection::ReceiptError::InvalidRecord); continue; }
+                    }
+                }
+                Err(error) => { decoded.interjections = Err(error); continue; }
+            }
+        }
+        if raw.get("interjection_receipt").is_some() {
+            let receipt = serde_json::from_value::<super::interjection::ReceiptRecord>(raw);
+            if let Ok(index) = &mut decoded.interjections {
+                match receipt {
+                    Ok(record) => {
+                        if let Err(error) = index.restore(record.interjection_receipt) {
+                            decoded.interjections = Err(error);
+                        }
+                    }
+                    Err(_) => decoded.interjections = Err(xai_chat_state::interjection::ReceiptError::InvalidRecord),
+                }
+            }
+            continue;
+        }
         let item_result = if chat_format_version >= CHAT_FORMAT_VERSION {
             serde_json::from_value::<ConversationItem>(raw.clone()).or_else(|e| {
                 serde_json::from_value::<ChatRequestMessage>(raw.clone())

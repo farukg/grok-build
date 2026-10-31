@@ -255,10 +255,9 @@ async fn stopped_session_refuses_parked_wake_before_publication() {
     let backend = parent_backend(&harness);
     let send = park_wake_until_terminal_publication(&mut harness, &backend).await;
 
-    assert!(matches!(
-        backend.cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled { .. }
-    ));
+    let revocation = backend.cancel_parent_session().await.expect("revocation ACK");
+    assert_eq!(revocation.parent_session_id, "parent");
+    assert!(!revocation.completions.is_empty(), "parked producer identity must be sealed");
     assert_eq!(
         send.await.unwrap(),
         ActiveAgentMessageOutcome::NotActiveOrFinalizing

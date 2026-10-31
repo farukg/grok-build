@@ -14,13 +14,16 @@ mod agent_quotas;
 pub mod child_submission;
 mod agent_targets;
 mod completion;
-mod graph;
+pub(crate) mod graph;
 mod list_owned;
+mod inventory_capture;
+pub(crate) use inventory_capture::{RuntimeInventoryCapture, RuntimeInventoryCaptureFuture};
 mod native_recovery;
 mod query;
 mod queue;
 mod resume;
 mod root_targets;
+mod parent_revocation;
 mod spawn;
 mod wake;
 
@@ -418,6 +421,10 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
 
     fn handle_command(&mut self, command: SubagentEvent) {
         match command {
+            SubagentEvent::RevokeParentSession { parent_session_id, intent, respond_to } => {
+                let revocation = self.revoke_parent_session(&parent_session_id, intent);
+                let _ = respond_to.send(Ok(revocation));
+            }
             SubagentEvent::RecoverMessage(command) => self.recover_message(command),
             SubagentEvent::Spawn(command) => self.handle_spawn(command),
             SubagentEvent::Query(query) => {
@@ -473,11 +480,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     let _ = request
                         .respond_to
                         .send(SubagentCancelOutcome::Cancelled { cause });
-                }
-                SubagentCancelTarget::ParentSession(intent) => {
-                    let outcome =
-                        self.cancel_parent_session(request.parent_session_id.as_deref(), intent);
-                    let _ = request.respond_to.send(outcome);
                 }
                 SubagentCancelTarget::WorkflowRunId(run_id) => {
                     self.cancel_workflow_children(&run_id, request.parent_session_id.as_deref());
@@ -766,6 +768,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             Some(TerminalOutput::Committing {
                 completion,
                 recipient,
+                ..
             }) => (completion, recipient),
             Some(output @ (TerminalOutput::Finishing(_) | TerminalOutput::Publishing { .. })) => {
                 self.terminal_outputs.insert(subagent_id, output);
@@ -1107,8 +1110,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     if !defer_admission {
                         self.activate_wake_incarnation(&promoted_id);
                     }
-                } else {
-                    let _ = self.current_target_incarnation(&promoted_id);
                 }
                 let _ = respond_to.send(true);
                 if !defer_admission {
@@ -1231,6 +1232,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         wake_of: Option<DisplacedCompletedChild>,
     ) {
         let id = request.id.clone();
+        if wake_origin.is_some() {
+            let _ = self.begin_wake_incarnation(&id);
+        } else {
+            let _ = self.current_target_incarnation(&id);
+        }
         let cancellation = request.cancel_token.clone();
         // `spawn_reply: None`: the caller was auto-backgrounded while queued.
         let handle_only = request.run_in_background || spawn_reply.is_none();
@@ -1571,6 +1577,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             return;
         }
 
+        match &record {
+            ChildRecord::Pending(child) => {
+                if child.wake_of.is_some() {
+                    self.activate_wake_incarnation(id);
+                }
+            }
+            ChildRecord::Active(child) => {
+                if child.deferred_wake.is_some() {
+                    self.activate_wake_incarnation(id);
+                }
+            }
+        }
         let request = record.request().clone();
         let completion_attempt_id = record.attempt_id().clone();
         let launched = match &record {
@@ -1675,7 +1693,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             publication: super::coordinator_state::TerminalPublicationState::Committing,
             reply_target,
             request: request.clone(),
-            started_at,
+            origin: if launched {
+                super::coordinator_state::CompletedOrigin::Attempt { started_at }
+            } else {
+                super::coordinator_state::CompletedOrigin::NotStarted { admitted_at: started_at }
+            },
             child_session_id,
             persona,
             resumed_from,
@@ -1695,7 +1717,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             &completed.result,
             None,
             completed.persona.clone(),
-            super::coordinator_state::instant_to_epoch_ms(completed.started_at),
+            super::coordinator_state::instant_to_epoch_ms(completed.origin.since()),
         );
 
         if completed.persisted_output_ref.is_some() {
@@ -1719,6 +1741,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             reporting,
         };
         let finished_session = completed.child_session_id.clone();
+        let origin = completed.origin;
         self.completed.insert(id.to_owned(), completed);
         self.completed_order.push_back(id.to_owned());
         self.purge_completions_for_spawner(&finished_session);
@@ -1730,6 +1753,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         self.terminal_outputs.insert(
             id.to_owned(),
             super::coordinator_state::TerminalOutput::Committing {
+                origin,
                 completion: ChildCompletion {
                     attempt_id: completion_attempt_id,
                     request,
@@ -1983,6 +2007,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 super::coordinator_state::TerminalOutput::Committing {
                     completion,
                     recipient,
+                    ..
                 } => {
                     completion.request.parent_session_id == parent_session_id
                         || recipient.session_id() == Some(parent_session_id)

@@ -30,6 +30,7 @@ pub mod resume;
 pub mod root_control;
 pub mod types;
 pub mod terminal;
+pub mod inventory;
 
 use self::backend::SubagentBackendResource;
 use self::types::CurrentPromptIdResource;
@@ -686,6 +687,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             cancel_token: child_cancellation,
             spawn_root: SpawnRootSpan::new(spawn_root_span),
             tool_call_id: Some(ctx.call_id.as_str().to_owned()),
+            recorded_spawner: None,
         };
 
         let completion_observations = ctx

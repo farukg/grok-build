@@ -130,13 +130,13 @@ async fn shutdown_and_recover_child() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn human_prompt_command_promotes_parked_child_without_manual_clear_or_kick() {
+async fn human_prompt_command_does_not_promote_a_stopped_child() {
     tokio::task::LocalSet::new().run_until(tokio::time::timeout(
         std::time::Duration::from_secs(5),
         async {
             let CompletionWakeReceiverFixture { actor, sender, task: _task, writes: _writes } = completion_wake_receiver_fixture().await;
             actor.state.lock().await.running_task = None;
-            actor.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+            actor.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::HumanStopped).await.unwrap();
             actor.state.lock().await.notifications_suppressed = true;
             let completion = test_completion_wake("human-resume-child");
             let prompt_id = completion_wake_prompt_id(&completion);
@@ -162,22 +162,20 @@ async fn human_prompt_command_promotes_parked_child_without_manual_clear_or_kick
             sender.send(SessionCommand::GetToolOverrides { respond_to }).unwrap();
             receive.await.unwrap();
             let state = actor.state.lock().await;
-            assert_eq!(state.running_prompt_id(), Some(prompt_id.as_str()));
-            assert!(!state.notifications_suppressed);
-            assert!(state.pending_inputs.iter().any(|input| input.prompt_id == "human-reengagement"));
+            assert_ne!(state.running_prompt_id(), Some(prompt_id.as_str()));
+            drop(state);
+            assert!(!completion_projected(&actor, "human-resume-child").await);
         },
-    )).await.expect("the actual actor must promote the parked completion on human intake");
+    )).await.expect("new human intake must not promote stopped work");
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn restore_command_rewrites_human_stopped_even_on_a_fresh_clear_actor() {
+async fn restore_command_preserves_human_stopped_on_a_fresh_actor() {
     tokio::task::LocalSet::new().run_until(tokio::time::timeout(
         std::time::Duration::from_secs(5),
         async {
             let CompletionWakeReceiverFixture { actor, sender, task: _task, writes: _writes } = completion_wake_receiver_fixture().await;
-            actor.notifications.persistence_tx.send(PersistenceMsg::CompletionWakePolicy(
-                crate::session::completion_delivery::CompletionWakePolicy::HumanStopped,
-            )).unwrap();
+            actor.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::HumanStopped).await.unwrap();
             assert_eq!(actor.persisted_completion_state().await.unwrap().wake_policy,
                 crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
             sender.send(SessionCommand::RestoreCompletionWakePolicy(
@@ -187,20 +185,20 @@ async fn restore_command_rewrites_human_stopped_even_on_a_fresh_clear_actor() {
             sender.send(SessionCommand::GetToolOverrides { respond_to }).unwrap();
             receive.await.unwrap();
             assert_eq!(actor.persisted_completion_state().await.unwrap().wake_policy,
-                crate::session::completion_delivery::CompletionWakePolicy::Automatic);
-            assert!(!actor.state.lock().await.notifications_suppressed);
+                crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+            assert!(actor.state.lock().await.notifications_suppressed);
         },
-    )).await.expect("restart must durably retire the historical stop barrier");
+    )).await.expect("restart must preserve the durable Stop barrier");
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn restore_command_promotes_a_previously_parked_completion() {
+async fn restore_command_never_promotes_a_stopped_completion() {
     tokio::task::LocalSet::new().run_until(tokio::time::timeout(
         std::time::Duration::from_secs(5),
         async {
             let CompletionWakeReceiverFixture { actor, sender, task: _task, writes: _writes } = completion_wake_receiver_fixture().await;
             actor.state.lock().await.running_task = None;
-            actor.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+            actor.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::HumanStopped).await.unwrap();
             actor.state.lock().await.notifications_suppressed = true;
             let completion = test_completion_wake("restart-parked");
             let prompt_id = completion_wake_prompt_id(&completion);
@@ -219,9 +217,10 @@ async fn restore_command_promotes_a_previously_parked_completion() {
             let (respond_to, receive) = oneshot::channel();
             sender.send(SessionCommand::GetToolOverrides { respond_to }).unwrap();
             receive.await.unwrap();
-            assert_eq!(actor.state.lock().await.running_prompt_id(), Some(prompt_id.as_str()));
+            assert!(actor.state.lock().await.running_task.is_none());
+            assert!(!completion_projected(&actor, "restart-parked").await);
         },
-    )).await.expect("restart must re-admit the parked completion without a later prompt");
+    )).await.expect("restart is not authority to re-admit stopped work");
 }
 
 #[tokio::test(flavor = "current_thread")]

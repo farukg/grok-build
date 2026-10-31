@@ -9,6 +9,22 @@ use xai_grok_login::PreferredAuthMethod;
 use crate::upload::trace::PromptMetadataParams;
 use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend;
 use xai_tty_utils::ProcessScope;
+#[derive(Debug)]
+#[must_use]
+pub(super) enum SessionInstallOutcome {
+    Installed,
+    Superseded,
+    StampFailed,
+}
+impl SessionInstallOutcome {
+    pub(super) fn require_current(self) -> Result<(), acp::Error> {
+        match self {
+            Self::Installed => Ok(()),
+            Self::Superseded => Err(acp::Error::invalid_params().data("session load was superseded")),
+            Self::StampFailed => Err(acp::Error::invalid_params().data("session identity stamp failed")),
+        }
+    }
+}
 struct SessionConfigInputs {
     model_id: acp::ModelId,
     effort_options: Vec<ReasoningEffortOption>,
@@ -4147,7 +4163,7 @@ impl MvpAgent {
         init: &acp::InitializeRequest,
         spec: SessionSpawnOptions<'_>,
         spawn_trace: Option<xai_grok_telemetry::startup::SpawnTraceContext>,
-    ) -> Result<bool, acp::Error> {
+    ) -> Result<SessionInstallOutcome, acp::Error> {
         let SessionSpawnOptions {
             session_info,
             cwd,
@@ -4157,6 +4173,7 @@ impl MvpAgent {
             persistence,
             root_identity,
             attach_waiter,
+            completion_wake_policy,
             mut chat_history,
             rewind_points_file_path,
             initial_total_tokens,
@@ -4430,6 +4447,9 @@ impl MvpAgent {
             self.subagent_presentation.borrow().turn_active_flag(),
         );
         tool_ctx.monitor_event_buffer = Some(self.monitor_event_buffer.clone());
+        let wake_gate = xai_grok_tools::reminders::task_completion::TaskWakeSuppressed::default();
+        wake_gate.set(completion_wake_policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+        tool_ctx.task_wake_suppressed = Some(wake_gate);
         tool_ctx.subagent_depth = 0;
         tool_ctx.auto_wake_enabled = self
             .cfg
@@ -5040,10 +5060,8 @@ impl MvpAgent {
         } = init;
         #[cfg(test)]
         super::test_hooks::pause_at(super::test_hooks::AttachPause::AfterSpawn).await;
-        self.set_session_live_state(&session_info.id, SessionLiveState::IdleResident);
         self.ensure_session_supervisor();
         self.heap_profile_set_session_id(&session_info.id.0);
-        self.push_roster_delta_upserted(&session_info.id);
         if chat_history.is_empty() {
             let _timer = crate::instrumentation_timer!("session.system_prompt_inject");
             let system_prompt = build_spawn_system_prompt(
@@ -5102,8 +5120,6 @@ impl MvpAgent {
                 }
             });
         }
-        self.session_registry
-            .set_permission_receiver(&session_info.id, permission_events_rx);
         if handle_display_cwd.is_some() {
             handle.display_cwd = handle_display_cwd;
         }
@@ -5113,8 +5129,7 @@ impl MvpAgent {
             .send(SessionCommand::DispatchSessionStartHook {
                 source: source.to_string(),
             });
-        self.notify_session_cwd_for_watch(std::path::Path::new(&session_info.cwd));
-        self.activity.register_session(&session_info.id.0, &handle);
+        let installed_handle = handle.clone();
         let bind_cwd = handle.tool_context.cwd.clone();
         let bind_tracker = handle.hunk_tracker_handle.clone();
         let (displaced, install_id) = match attach_waiter {
@@ -5132,7 +5147,7 @@ impl MvpAgent {
                     Ok((displaced, install_id)) => (displaced, Some(install_id)),
                     Err(stale) => {
                         self.roll_back_install(&session_info.id, *stale).await;
-                        return Ok(false);
+                        return Ok(SessionInstallOutcome::Superseded);
                     }
                 }
             }
@@ -5141,6 +5156,12 @@ impl MvpAgent {
                 (self.install_resident(&session_info.id, handle, root_identity), None)
             }
         };
+        self.set_session_live_state(&session_info.id, SessionLiveState::IdleResident);
+        self.push_roster_delta_upserted(&session_info.id);
+        self.session_registry
+            .set_permission_receiver(&session_info.id, permission_events_rx);
+        self.notify_session_cwd_for_watch(std::path::Path::new(&session_info.cwd));
+        self.activity.register_session(&session_info.id.0, &installed_handle);
         self.bind_accepted_install(
             &workspace_ops,
             &session_info.id,
@@ -5155,16 +5176,18 @@ impl MvpAgent {
                 session_info.id.clone(),
                 install_id,
             ));
-        let displaced_existing = if let Some(old) = displaced {
+        if let Some(old) = displaced {
             if let Some(scope) = &old.tool_context.process_scope {
                 scope.kill_all();
             }
-            true
-        } else {
-            false
-        };
+        }
         #[cfg(test)]
         super::test_hooks::pause_at(super::test_hooks::AttachPause::AfterInstall).await;
+        if !self.resident_handle(&session_info.id).is_some_and(|current| {
+            current.cmd_tx.same_channel(&installed_handle.cmd_tx)
+        }) {
+            return Ok(SessionInstallOutcome::Superseded);
+        }
         if let Some(install_id) = install_id {
             if matches!(self.session_host(&session_info.id), Some(SessionHost::Child(_))) {
                 match self.session_registry.resolve_identity_stamp(
@@ -5175,22 +5198,22 @@ impl MvpAgent {
                     StampResolution::Landed => {}
                     StampResolution::Withdrawn(withdrawn) => {
                         self.roll_back_install(&session_info.id, *withdrawn).await;
-                        return Ok(false);
+                        return Ok(SessionInstallOutcome::StampFailed);
                     }
-                    StampResolution::Superseded => return Ok(false),
+                    StampResolution::Superseded => return Ok(SessionInstallOutcome::Superseded),
                 }
                 if let Some(guard) = &mut stamp_guard {
                     guard.disarm();
                 }
-                return Ok(!displaced_existing);
+                return Ok(SessionInstallOutcome::Installed);
             }
             let Some(identity) = self
                 .session_registry
                 .current_attach_identity(&session_info.id, install_id) else {
-                return Ok(false);
+                return Ok(SessionInstallOutcome::Superseded);
             };
             let Some(current) = self.resident_handle(&session_info.id) else {
-                return Ok(false);
+                return Ok(SessionInstallOutcome::Superseded);
             };
             let (respond_to, response) = tokio::sync::oneshot::channel();
             let sent = current
@@ -5216,9 +5239,15 @@ impl MvpAgent {
                 StampResolution::Landed => {}
                 StampResolution::Withdrawn(withdrawn) => {
                     self.roll_back_install(&session_info.id, *withdrawn).await;
-                    return Ok(false);
+                    return Ok(SessionInstallOutcome::StampFailed);
                 }
-                StampResolution::Superseded => return Ok(false),
+                StampResolution::Superseded => {
+                    return Ok(match outcome {
+                        IdentityStamp::Failed => SessionInstallOutcome::StampFailed,
+                        IdentityStamp::Durable => SessionInstallOutcome::Superseded,
+                        IdentityStamp::Pending => SessionInstallOutcome::Superseded,
+                    });
+                }
             }
         }
         if is_headless {
@@ -5230,7 +5259,7 @@ impl MvpAgent {
             crate::session::prompt_history::truncate_if_needed_async(cwd_for_maintenance)
                 .await;
         });
-        Ok(!displaced_existing)
+        Ok(SessionInstallOutcome::Installed)
     }
     /// Collects all pending permission events from a session's receiver.
     /// Returns only the events from the current turn (since last collection).

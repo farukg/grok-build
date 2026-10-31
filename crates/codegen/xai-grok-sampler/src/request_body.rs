@@ -2,11 +2,12 @@
 
 use xai_grok_sampling_types::{
     ChatCompletionRequest, ConversationRequest, CreateResponseWrapper, MessagesRequestWrapper,
-    Result, SamplingError, build_messages_request,
+    Result, SamplingError,
 };
 use crate::client::{ANTHROPIC_DEFAULT_MAX_TOKENS, ClientDefaults, StreamingChatRequest, StreamOptions,
     splice_extra_tool_entries, append_response_includes};
 use xai_grok_sampling_types::rs;
+use xai_grok_sampling_types::instruction_projection::ProviderInstructionPlan;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BodyMode { NonStreaming, Streaming }
@@ -157,7 +158,7 @@ pub(crate) fn responses_body(
     json_body(&body)
 }
 
-pub(crate) fn responses_request(mut request: ConversationRequest, mode: BodyMode) -> CreateResponseWrapper {
+pub(crate) fn responses_request(mut request: ConversationRequest, mode: BodyMode) -> (CreateResponseWrapper, ProviderInstructionPlan) {
     let trace = request.trace.take();
     let x_grok_conv_id = request.x_grok_conv_id.clone();
     let x_grok_req_id = request.x_grok_req_id.clone();
@@ -169,7 +170,7 @@ pub(crate) fn responses_request(mut request: ConversationRequest, mode: BodyMode
     // The hosted tools travel as raw JSON, spliced in after serialization by `splice_extra_tool_entries`, whose doc explains why each one does
     let extra_tools = xai_grok_sampling_types::extra_tool_entries(&request.hosted_tools);
 
-    let responses_request: rs::CreateResponse = (&request).into();
+    let (responses_request, plan) = xai_grok_sampling_types::responses_request_with_instructions(&request);
 
     let mut wrapper = CreateResponseWrapper::new(responses_request);
     wrapper.x_grok_conv_id = x_grok_conv_id;
@@ -188,10 +189,10 @@ pub(crate) fn responses_request(mut request: ConversationRequest, mode: BodyMode
         wrapper.trace = Some(trace);
     }
 
-    wrapper
+    (wrapper, plan)
 }
 
-pub(crate) fn messages_request(mut request: ConversationRequest, mode: BodyMode) -> MessagesRequestWrapper {
+pub(crate) fn messages_request(mut request: ConversationRequest, mode: BodyMode) -> (MessagesRequestWrapper, ProviderInstructionPlan) {
     let trace = request.trace.take();
     let x_grok_conv_id = request.x_grok_conv_id.clone();
     let x_grok_req_id = request.x_grok_req_id.clone();
@@ -200,7 +201,7 @@ pub(crate) fn messages_request(mut request: ConversationRequest, mode: BodyMode)
     let x_grok_transient_retry = request.x_grok_transient_retry.clone();
     let x_grok_agent_id = request.x_grok_agent_id.clone();
 
-    let messages_request = build_messages_request(&request);
+    let (messages_request, plan) = xai_grok_sampling_types::messages_request_with_instructions(&request);
 
     let mut wrapper = MessagesRequestWrapper::new(messages_request);
     wrapper.x_grok_conv_id = x_grok_conv_id;
@@ -218,5 +219,5 @@ pub(crate) fn messages_request(mut request: ConversationRequest, mode: BodyMode)
         wrapper.trace = Some(trace);
     }
 
-    wrapper
+    (wrapper, plan)
 }

@@ -2398,12 +2398,22 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::InterjectFailed {
             agent_id,
+            binding,
             error,
             remaining,
         } => {
-            if let Some(agent) = app.agents.get_mut(&agent_id) {
+            if let Some(agent) = app.agents.get_mut(&agent_id)
+                && agent.current_actions_binding().as_ref() == Some(&binding)
+            {
+                let mut requeued = false;
                 for (text, interjection_id, _blocks) in remaining.into_iter().rev() {
                     agent.self_interjection_ids.remove(&interjection_id);
+                    if !agent.session.tracker.reject_interjection(&interjection_id) {
+                        agent.interjection_painted_blocks.remove(&interjection_id);
+                        agent.interjection_retry_images.remove(&interjection_id);
+                        continue;
+                    }
+                    requeued = true;
                     if let Some(entry_id) =
                         agent.interjection_painted_blocks.remove(&interjection_id)
                     {
@@ -2415,11 +2425,16 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         .unwrap_or_default();
                     let id = agent.session.next_queue_id;
                     agent.session.next_queue_id += 1;
+                    agent.session.tracker.queue_interjection_retry(&interjection_id, id);
                     agent
                         .session
                         .pending_prompts
                         .push_front(crate::app::agent::QueuedPrompt {
                             id,
+                            interjection: Some(xai_grok_sampling_types::InterjectionIdentity {
+                                id: interjection_id,
+                                display_text: text.clone(),
+                            }),
                             text,
                             kind: crate::app::agent::QueueEntryKind::Prompt,
                             wire_blocks: None,
@@ -2430,7 +2445,9 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                             combined_texts: Vec::new(),
                         });
                 }
-                agent.show_toast(&format!("Interjection failed. Requeued: {error}"));
+                if requeued {
+                    agent.show_toast(&format!("Interjection failed. Requeued: {error}"));
+                }
             }
             vec![]
         }

@@ -707,7 +707,7 @@ pub(crate) async fn spawn_session_actor(
         pending_inputs: VecDeque::new(),
         edit_holds: HashMap::new(),
         pending_notifications: Vec::new(),
-        notifications_suppressed: false,
+        notifications_suppressed: tool_context.task_wake_suppressed.as_ref().is_some_and(|gate| gate.get()),
         rewindable: false,
         front_message_committed: false,
         hook_block_hold: Default::default(),
@@ -721,8 +721,7 @@ pub(crate) async fn spawn_session_actor(
     let file_state_handle = FileStateHandle::new(file_state_tracker.clone());
     let task_completion_reservations =
         xai_grok_tools::reminders::task_completion::TaskCompletionReservations::default();
-    let task_wake_suppressed =
-        xai_grok_tools::reminders::task_completion::TaskWakeSuppressed::default();
+    let task_wake_suppressed = tool_context.task_wake_suppressed.clone().unwrap_or_default();
     tool_context.task_completion_reservations = Some(task_completion_reservations.clone());
     tool_context.task_wake_suppressed = Some(task_wake_suppressed.clone());
     let synthetic_trace_tx_shared: std::sync::Arc<

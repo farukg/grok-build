@@ -15,6 +15,20 @@ pub(super) enum WakeBarrier {
     Clear,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum WakeReengagement {
+    NewHumanMessage,
+    GoalResume,
+    SendNow,
+    Rewind,
+}
+
+pub(super) enum StopPolicyCommit {
+    NotRequired,
+    Committed,
+    Failed(std::io::Error),
+}
+
 /// Outcome of `cancel_running_task`.
 #[must_use = "the notification drain and the idle ping both depend on this"]
 pub(super) struct CancelOutcome {
@@ -23,6 +37,7 @@ pub(super) struct CancelOutcome {
     /// Whether that leaves the session idle is the loop's call.
     pub(super) turn_stopped: bool,
     pub(super) settled: bool,
+    pub(super) policy: StopPolicyCommit,
 }
 
 impl CancelOutcome {
@@ -31,6 +46,16 @@ impl CancelOutcome {
             barrier: WakeBarrier::Clear,
             turn_stopped: false,
             settled: false,
+            policy: StopPolicyCommit::NotRequired,
+        }
+    }
+
+    fn policy_failed(error: std::io::Error) -> Self {
+        Self {
+            barrier: WakeBarrier::Armed,
+            turn_stopped: false,
+            settled: false,
+            policy: StopPolicyCommit::Failed(error),
         }
     }
 }
@@ -73,8 +98,9 @@ impl SessionActor {
         if let Some(event_tx) = self.tool_context.subagent_event_tx.clone() {
             use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
             let backend = ChannelBackend::for_session(event_tx, self.session_id_string());
-            let _ =
-                backend.request_cancel_parent_session(intent, tokio::sync::oneshot::channel().0);
+            if let Err(error) = backend.request_cancel_parent_session(intent, tokio::sync::oneshot::channel().0) {
+                tracing::warn!(%error, "parent child cancellation request was not accepted");
+            }
         }
     }
 
@@ -100,13 +126,29 @@ impl SessionActor {
         }
     }
 
-    /// Takes the state lock with `try_lock`, so it must run before its caller's first await: a task suspended across one still holds the guard.
-    fn arm_wake_barrier(&self, trigger: Option<&crate::session::CancelTrigger>) {
+    async fn arm_wake_barrier(&self, trigger: Option<&crate::session::CancelTrigger>) -> std::io::Result<()> {
+        if let Some(gate) = &self.tool_context.task_wake_suppressed {
+            gate.set(true);
+        }
+        {
+            let mut state = self.state.lock().await;
+            state.notifications_suppressed = true;
+            if let Some(task) = state.running_task.as_ref() {
+                task.abort();
+            }
+        }
+        self.cancel_active_sampling_requests();
         self.set_completion_wake_policy(
             crate::session::completion_delivery::CompletionWakePolicy::HumanStopped,
-        );
-        let mut state = self.state.try_lock().expect("session state is actor-owned");
-        state.notifications_suppressed = true;
+        ).await?;
+        self.seal_registered_stop_completions().await?;
+        let mut state = self.state.lock().await;
+        let running = state.running_prompt_id().map(str::to_owned);
+        let removed = state.sweep_pending_inputs(|input| Some(input.prompt_id.as_str()) != running.as_deref());
+        self.broadcast_queue_changed(&state);
+        for input in removed {
+            Self::respond_removed_prompt(input.respond_to);
+        }
         xai_grok_telemetry::unified_log::info(
             "shell.task_wake.cancel_barrier",
             Some(self.session_info.id.0.as_ref()),
@@ -124,6 +166,52 @@ impl SessionActor {
         if let Some(is_turn_active) = &self.tool_context.is_turn_active {
             is_turn_active.store(false, std::sync::atomic::Ordering::Relaxed);
         }
+        Ok(())
+    }
+
+    async fn seal_registered_stop_completions(&self) -> std::io::Result<()> {
+        use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, TerminalCompletionId};
+        let owner = self.session_id_string();
+        let mut ids: Vec<CompletionIdentity> = Vec::new();
+        if let Some(event_tx) = self.tool_context.subagent_event_tx.clone() {
+            use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
+            let backend = ChannelBackend::for_session(event_tx, owner.clone());
+            let (respond_to, response) = oneshot::channel();
+            backend.request_cancel_parent_session(ChildCancellation::Authorized, respond_to)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::BrokenPipe,
+                    format!("Stop child revocation owner closed: {error}")))?;
+            let revocation = response.await.map_err(|_| std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe, "Stop child revocation acknowledgement lost"))?
+                .map_err(std::io::Error::other)?;
+            if revocation.parent_session_id != owner {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
+                    "Stop child revocation acknowledged another parent"));
+            }
+            ids.extend(revocation.completions.into_iter().map(CompletionIdentity::from));
+        }
+        for task in self.tool_bridge_handle().registered_completion_tasks().await
+            .map_err(std::io::Error::other)? {
+            if task.owner_session_id.as_deref() != Some(owner.as_str()) {
+                continue;
+            }
+            ids.push(TerminalCompletionId::Task {
+                owner_session_id: owner.clone(), task_id: task.task_id,
+                task_kind: match task.kind {
+                    xai_grok_tools::computer::types::TaskKind::Bash => CompletionTaskKind::Bash,
+                    xai_grok_tools::computer::types::TaskKind::Monitor => CompletionTaskKind::Monitor,
+                },
+            }.into());
+        }
+        let workflow_authority = self.workflow_manager.lock().await.registered_stop_authority();
+        ids.extend(workflow_authority.completions);
+        let (respond_to, response) = oneshot::channel();
+        self.notifications.persistence_tx.send(PersistenceMsg::SealHumanStoppedCompletions {
+            ids, workflow_episodes: workflow_authority.episodes, respond_to,
+        })
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe,
+                "Stop suppression persistence owner closed"))?;
+        response.await.map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe,
+            "Stop suppression commit acknowledgement lost"))?
     }
 
     fn abort_turn_task(&self, task: &AgentTask, epoch: super::turn_report_slot::TurnEpoch) {
@@ -134,41 +222,26 @@ impl SessionActor {
         self.emit_long_reasoning_turn_event();
     }
 
-    /// Re-admission step for human re-engagement (fresh user input, `/goal resume`,
-    /// restart restore): clears the StopGesture wake barrier (live gate + persisted
-    /// policy) and the notification suppression so parked completion wakes promote.
-    /// The persisted policy is only rewritten when a barrier was actually armed, so
-    /// the per-prompt intake call stays off the persistence hot path.
-    pub(super) async fn clear_wake_suppression(&self, reason: &'static str) {
-        let gate_armed = self
-            .tool_context
-            .task_wake_suppressed
-            .as_ref()
-            .is_some_and(|gate| gate.get());
-        let was_suppressed = {
-            let mut state = self.state.lock().await;
-            let was_suppressed = state.notifications_suppressed;
-            state.notifications_suppressed = false;
-            if state.take_hook_block_hold() {
-                xai_grok_telemetry::unified_log::info(
-                    "shell.prompt.hook_block_hold_released",
-                    Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!({ "reason": reason })),
-                );
-            }
-            was_suppressed
-        };
-        if !gate_armed && !was_suppressed {
-            return;
+    /// Only resolved, newly submitted human input can reopen Stop admission.
+    pub(super) async fn clear_wake_suppression(&self, authority: WakeReengagement) -> std::io::Result<()> {
+        match authority {
+            WakeReengagement::GoalResume | WakeReengagement::SendNow | WakeReengagement::Rewind => return Ok(()),
+            WakeReengagement::NewHumanMessage => {}
         }
-        self.set_completion_wake_policy(
-            crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-        );
-        xai_grok_telemetry::unified_log::info(
-            "shell.task_wake.gate_cleared",
-            Some(self.session_info.id.0.as_ref()),
-            Some(serde_json::json!({ "reason": reason })),
-        );
+        let gate_armed = self.tool_context.task_wake_suppressed.as_ref().is_some_and(|gate| gate.get());
+        let state_suppressed = self.state.lock().await.notifications_suppressed;
+        if gate_armed || state_suppressed {
+            use crate::session::completion_delivery::CompletionWakePolicy;
+            // Retry the sealing write: a previous Stop may have lost its commit ACK.
+            self.set_completion_wake_policy(CompletionWakePolicy::HumanStopped).await?;
+            self.seal_registered_stop_completions().await?;
+            self.drop_pending_synthetic_items().await;
+            self.set_completion_wake_policy(CompletionWakePolicy::Automatic).await?;
+        }
+        let mut state = self.state.lock().await;
+        state.notifications_suppressed = false;
+        state.take_hook_block_hold();
+        Ok(())
     }
 
     /// The Ctrl+C teardown, except the running command moves to the background instead of being killed.
@@ -197,25 +270,9 @@ impl SessionActor {
         if !outcome.settled {
             return outcome;
         }
-        self.set_completion_wake_policy(
-            crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-        );
-        {
-            let mut state = self.state.lock().await;
-            state.notifications_suppressed = false;
-            if state.take_hook_block_hold() {
-                xai_grok_telemetry::unified_log::info(
-                    "shell.prompt.hook_block_hold_released",
-                    Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!({ "reason": "send_now" })),
-                );
-            }
+        if let Err(error) = self.clear_wake_suppression(WakeReengagement::SendNow).await {
+            return CancelOutcome::policy_failed(error);
         }
-        xai_grok_telemetry::unified_log::info(
-            "shell.task_wake.gate_cleared",
-            Some(self.session_info.id.0.as_ref()),
-            Some(serde_json::json!({ "reason": "send_now" })),
-        );
         outcome
     }
 
@@ -283,11 +340,15 @@ impl SessionActor {
             usage: None,
             tool_overrides: self.effective_tool_overrides(),
         }));
-        // The rewind cleared the barrier when it claimed/popped; wakes flow.
         CancelOutcome {
-            barrier: WakeBarrier::Clear,
+            barrier: if self.tool_context.task_wake_suppressed.as_ref().is_some_and(|gate| gate.get()) {
+                WakeBarrier::Armed
+            } else {
+                WakeBarrier::Clear
+            },
             turn_stopped,
             settled: true,
+            policy: StopPolicyCommit::NotRequired,
         }
     }
 
@@ -332,7 +393,9 @@ impl SessionActor {
                 let idle = state.running_task.is_none();
                 drop(state);
                 let barrier = if idle && kind == Some(crate::session::CancelKind::StopGesture) {
-                    self.arm_wake_barrier(options.trigger.as_ref());
+                    if let Err(error) = self.arm_wake_barrier(options.trigger.as_ref()).await {
+                        return CancelOutcome::policy_failed(error);
+                    }
                     WakeBarrier::Armed
                 } else {
                     WakeBarrier::Clear
@@ -341,6 +404,7 @@ impl SessionActor {
                     barrier,
                     turn_stopped: false,
                     settled: false,
+                    policy: if barrier == WakeBarrier::Armed { StopPolicyCommit::Committed } else { StopPolicyCommit::NotRequired },
                 };
             }
         }
@@ -391,12 +455,15 @@ impl SessionActor {
                     crate::session::CancelHistoryDisposition::Keep
                 )
             {
-                self.arm_wake_barrier(options.trigger.as_ref());
+                if let Err(error) = self.arm_wake_barrier(options.trigger.as_ref()).await {
+                    return CancelOutcome::policy_failed(error);
+                }
                 self.abort_compaction_for_manual_stop().await;
                 return CancelOutcome {
                     barrier: WakeBarrier::Armed,
                     turn_stopped: false,
                     settled: true,
+                    policy: StopPolicyCommit::Committed,
                 };
             }
             match &options.history {
@@ -484,15 +551,9 @@ impl SessionActor {
                     self.abort_turn_task(&task, turn_epoch);
                     self.cancel_active_sampling_requests();
                 }
-                self.set_completion_wake_policy(
-                    crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-                );
-                state.notifications_suppressed = false;
-                xai_grok_telemetry::unified_log::info(
-                    "shell.task_wake.gate_cleared",
-                    Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!({ "reason": "rewind" })),
-                );
+                if let Err(error) = self.clear_wake_suppression(WakeReengagement::Rewind).await {
+                    return CancelOutcome::policy_failed(error);
+                }
                 state.rewindable = false;
                 // The cut is captured under the lock so later commits cannot move it
                 let target_prompt_index = self
@@ -571,6 +632,17 @@ impl SessionActor {
             )
             | None => ChildCancellation::Authorized,
         };
+        let suppress_task_wakes = kind == Some(crate::session::CancelKind::StopGesture);
+        // Aborting the runner transfers completion responsibility to this cancel,
+        // including when the durable Stop acknowledgement fails.
+        let stop_policy = if suppress_task_wakes {
+            match self.arm_wake_barrier(trigger.as_ref()).await {
+                Ok(()) => StopPolicyCommit::Committed,
+                Err(error) => StopPolicyCommit::Failed(error),
+            }
+        } else {
+            StopPolicyCommit::NotRequired
+        };
         let mut finalization = if rewind_requested {
             CancelFinalization::Rewind
         } else {
@@ -644,10 +716,6 @@ impl SessionActor {
             }
         }
         let parent_teardown = self.state.lock().await.message_delivery.teardown;
-        let suppress_task_wakes = kind == Some(crate::session::CancelKind::StopGesture);
-        if suppress_task_wakes {
-            self.arm_wake_barrier(trigger.as_ref());
-        }
 
         // This unified-log marker is the counterpart of `shell.cancel.received` in `MvpAgent::cancel`.
         // The pin is only a snapshot: the authoritative cancel identity is `running_task.prompt_id`, captured under the state lock below `current_prompt_id` is cleared early (turn scope guard drop / `handle_completion`) while.
@@ -780,14 +848,6 @@ impl SessionActor {
                     binding = ?lease.binding,
                     "claimed cancel lost its exact finalization binding"
                 );
-                // Fail-stop, but do not strand StopGesture suppression (same
-                // cleanup as the identity-mismatch return below).
-                if suppress_task_wakes {
-                    self.set_completion_wake_policy(
-                        crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-                    );
-                    state.notifications_suppressed = false;
-                }
                 return CancelOutcome::noop();
             }
 
@@ -823,15 +883,9 @@ impl SessionActor {
                     self.abort_turn_task(&task, epoch);
                     rewound_task_prompt_id = Some(task.prompt_id);
                 }
-                self.set_completion_wake_policy(
-                    crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-                );
-                state.notifications_suppressed = false;
-                xai_grok_telemetry::unified_log::info(
-                    "shell.task_wake.gate_cleared",
-                    Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!({ "reason": "rewind" })),
-                );
+                if let Err(error) = self.clear_wake_suppression(WakeReengagement::Rewind).await {
+                    return CancelOutcome::policy_failed(error);
+                }
                 state.rewindable = false;
                 state.pending_inputs.pop_front()
             } else {
@@ -889,12 +943,6 @@ impl SessionActor {
                     front_prompt_id.as_deref(),
                     "stale_prompt_id",
                 );
-                if suppress_task_wakes {
-                    self.set_completion_wake_policy(
-                        crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-                    );
-                    state.notifications_suppressed = false;
-                }
                 return CancelOutcome::noop();
             }
             // Read before the front drains; teardown ends the session and rewind drops the turn.
@@ -1296,7 +1344,9 @@ impl SessionActor {
             turn_stopped,
             settled: settled
                 && terminal_result.is_ok()
-                && parent_teardown != ParentTeardownStatus::Unsettled,
+                && parent_teardown != ParentTeardownStatus::Unsettled
+                && !matches!(&stop_policy, StopPolicyCommit::Failed(_)),
+            policy: stop_policy,
         }
     }
 

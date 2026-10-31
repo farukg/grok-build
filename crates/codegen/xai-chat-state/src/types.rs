@@ -160,6 +160,8 @@ pub enum InjectedRequestRecord {
         text: String,
     },
     Synthetic {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interjection: Option<xai_grok_sampling_types::conversation::InterjectionIdentity>,
         reason: xai_grok_sampling_types::SyntheticReason,
         text: String,
         #[serde(default, skip_serializing_if = "xai_grok_sampling_types::SourceOccurrence::is_unadmitted")]

@@ -16,6 +16,17 @@ pub(crate) enum PublicationLoad {
 }
 
 impl AgentView {
+    pub(crate) fn accept_interjection_projection(&mut self, id: &str) -> bool {
+        if !self.session.tracker.accepted_interjection(id) {
+            return false;
+        }
+        self.self_interjection_ids.remove(id);
+        self.interjection_painted_blocks.remove(id);
+        self.interjection_retry_images.remove(id);
+        self.session.retire_interjection_retry(id)
+    }
+
+
     pub(crate) fn begin_publication_load(&mut self) -> Option<SnapshotBinding> {
         let binding = self.current_actions_binding()?;
         self.publication_load = PublicationLoad::Awaiting {
@@ -77,6 +88,27 @@ impl AgentView {
             incarnation: snapshot.version.incarnation,
         };
         self.finish_current_actions_replay(&context, snapshot.event_frontier)
+    }
+
+    pub(crate) fn accepts_interjection_publication(&self, meta: &crate::acp::meta::NotificationMeta) -> bool {
+        if !self.accepts_current_source(meta) {
+            return false;
+        }
+        match &meta.delivery_role {
+            DeliveryRole::Live { context } => {
+                self.current_actions_binding().as_ref() == Some(&context.binding)
+                    && matches!(meta.current_actions_version, crate::acp::meta::CurrentSourceMetadata::Version(version)
+                        if version.incarnation == context.incarnation)
+            }
+            DeliveryRole::Historical { binding } => {
+                meta.is_replay && self.current_actions_binding().as_ref() == Some(binding)
+            }
+            DeliveryRole::Unavailable => {
+                self.current_actions_context().is_none()
+                    && matches!(meta.current_actions_version, crate::acp::meta::CurrentSourceMetadata::Legacy)
+            }
+            DeliveryRole::LiveUnbound { .. } => false,
+        }
     }
 
     pub(crate) fn accepts_publication_role(&self, role: &DeliveryRole) -> bool {

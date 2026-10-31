@@ -190,37 +190,31 @@ impl SessionActor {
         Some(fallback)
     }
 
-    /// Restart boundary: a persisted `HumanStopped` barrier must not silently survive
-    /// the process boundary (gb-wake-1). The restored session re-admits wakes; only a
-    /// fresh stop gesture re-arms suppression.
+    /// Loading a session restores authority; it does not grant new authority.
     pub(super) async fn restore_completion_wake_policy(
         &self,
         policy: crate::session::completion_delivery::CompletionWakePolicy,
     ) {
-        if policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped {
-            xai_grok_telemetry::unified_log::info(
-                "shell.task_wake.barrier_not_restored",
-                Some(self.session_info.id.0.as_ref()),
-                Some(serde_json::json!({ "persisted_policy": "human_stopped" })),
-            );
-        }
-        self.clear_wake_suppression("restart_restore").await;
-        if policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped {
-            self.set_completion_wake_policy(
-                crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-            );
+        match policy {
+            crate::session::completion_delivery::CompletionWakePolicy::Automatic => {}
+            crate::session::completion_delivery::CompletionWakePolicy::HumanStopped => {
+                if let Err(error) = self.set_completion_wake_policy(policy).await {
+                    tracing::error!(%error, "restored Stop remains armed without durable sealing acknowledgement");
+                }
+            }
         }
     }
 
-    /// Workflow completion wake on the shared admission path (gb-wake-1): an
-    /// unreported completion queues a synthetic row; under suppression the row parks
-    /// in the queue (the promoter defers) instead of being dropped.
+    /// Workflow completion admission shares the session's authority gate.
     pub(super) async fn handle_workflow_completion_turn(
         self: std::sync::Arc<Self>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
         run_id: String,
         revision: u64,
     ) {
+        if !self.restart_recovery_permitted() {
+            return;
+        }
         let unreported = self
             .workflow_tracker()
             .await
@@ -247,8 +241,24 @@ impl SessionActor {
                 }),
             )
         };
-        if already_queued {
+        if already_queued || admission.is_parked() {
             return;
+        }
+        let identity = xai_chat_state::completion::TerminalCompletionId::Workflow {
+            run_id: run_id.clone(), revision,
+        }.into();
+        match self.persisted_completion_state().await {
+            Ok(state) => {
+                if state.wake_policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped
+                    || state.is_suppressed(&identity)
+                {
+                    return;
+                }
+            }
+            Err(error) => {
+                tracing::error!(%run_id, revision, %error, "workflow wake admission unavailable");
+                return;
+            }
         }
         let prompt_id = format!("workflow-completed-{run_id}-{revision}");
         let prompt_text = "A background workflow stopped. Review the workflow completion reminder, report the result to the user, and take any appropriate next action.";
@@ -1294,6 +1304,12 @@ pub(super) async fn run_session(
                                 crate::session::CancelHistoryDisposition::RewindIfNoOutput { .. }
                             );
                             let cancel = session.cancel_running_task(options).await;
+                            match &cancel.policy {
+                                super::cancel::StopPolicyCommit::NotRequired | super::cancel::StopPolicyCommit::Committed => {}
+                                super::cancel::StopPolicyCommit::Failed(error) => {
+                                    tracing::error!(%error, "Stop remains armed without durable policy acknowledgement");
+                                }
+                            }
                             // A rewind settles on its own rail (`settled` stays false), so it still gets the post-cancel kick.
                             // An unsettled non-rewind cancel lost the finalization claim; the owner's release re-kicks the queue.
                             if cancel.settled || is_rewind {
@@ -2221,10 +2237,10 @@ pub(super) async fn run_session(
                                 let _ = respond_to.send(result);
                             });
                         }
-                        SessionCommand::Interject { text, id, images } => {
+                        SessionCommand::Interject { text, id, images, delivery } => {
                             // Broadcast to every attached client so every pane viewing this session renders the interjection block
                             // The originator dedups this echo by `id` against its optimistic local block; viewers render it
-                            session.broadcast_interjection(&text, id.as_deref());
+                            session.broadcast_interjection_with_delivery(&text, id.as_deref(), &delivery);
                             // Telemetry at enqueue (not drain) so it is recorded even when a cancel clears the buffer before the next drain point
                             session.events.emit(crate::session::events::Event::Interjected {
                                 source: crate::session::events::InterjectionSource::Direct,
@@ -2242,13 +2258,14 @@ pub(super) async fn run_session(
                                 .is_some();
                             if turn_running {
                                 session.pending_interjections.push(PendingInterjection {
+                                    id,
                                     text,
                                     attachments: images,
                                 });
                                 tracing::info!("Queued mid-turn interjection");
                             } else {
                                 session
-                                    .queue_interjection_fallback_prompt(text, images, true)
+                                    .queue_interjection_fallback_prompt(text, images, id, true)
                                     .await;
                                 SessionActor::maybe_start_running_task(
                                     session.clone(),

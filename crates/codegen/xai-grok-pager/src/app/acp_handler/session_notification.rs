@@ -220,7 +220,13 @@ pub(super) fn handle_session_notification_with_origin(
     let Some(view) = app.agents.get(&id) else {
         return false;
     };
-    if !view.accepts_current_source(&meta) || (meta.is_replay && !view.accepts_replayed_update()) {
+    let interjection_identity = session_notif.meta.as_ref()
+        .and_then(|meta| meta.get("interjectionIdentity"))
+        .and_then(|value| serde_json::from_value::<xai_grok_sampling_types::InterjectionIdentity>(value.clone()).ok());
+    if !view.accepts_current_source(&meta)
+        || (interjection_identity.is_some() && !view.accepts_interjection_publication(&meta))
+        || (meta.is_replay && !view.accepts_replayed_update())
+    {
         return false;
     }
     if !meta.is_replay
@@ -1483,11 +1489,18 @@ fn handle_admitted_session_notification(
             }
         }
         XaiSessionUpdate::InjectedContextRecord { ref kind, ref text } => {
-            // Request-only content the model saw (memory-reminder splice, view transforms):
-            // one collapsed injected entry; the event-seq dedup above drops replay re-delivery.
-            let block = crate::scrollback::blocks::InjectedBlock::from_reason(kind, text);
-            agent.scrollback.push_block(RenderBlock::Injected(block));
-            true
+            if let Some(identity) = interjection_identity {
+                let projected = agent.session.tracker.project_interjection(
+                    &identity.id, &identity.display_text, &mut agent.scrollback,
+                );
+                agent.accept_interjection_projection(&identity.id) || projected
+            } else {
+                // Request-only content the model saw (memory-reminder splice, view transforms):
+                // one collapsed injected entry; the event-seq dedup above drops replay re-delivery.
+                let block = crate::scrollback::blocks::InjectedBlock::from_reason(kind, text);
+                agent.scrollback.push_block(RenderBlock::Injected(block));
+                true
+            }
         }
         _ => {
             tracing::trace!(

@@ -117,6 +117,7 @@ async fn drain_interjection_with_images_attaches_image_parts() {
         .run_until(async {
             let (actor, _gateway_rx) = build_actor().await;
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: "look at [Image #1]".to_string(),
                 attachments: vec![test_image_content()],
             });
@@ -163,6 +164,7 @@ async fn grok_build_interjection_with_images_gets_image_files_block() {
         .run_until(async {
             let (actor, _gateway_rx) = build_actor().await;
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: "look at [Image #1]".to_string(),
                 attachments: vec![test_image_content()],
             });
@@ -203,6 +205,7 @@ async fn drain_interjection_strips_placeholder_paths_from_text() {
         .run_until(async {
             let (actor, _gateway_rx) = build_actor().await;
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: "look at [Image #1: /tmp/secret/x.png] please".to_string(),
                 attachments: vec![test_image_content()],
             });
@@ -258,6 +261,7 @@ async fn drain_interjection_expands_skill_slash_reference() {
                 .await;
 
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: "/find-session foo".to_string(),
                 attachments: vec![],
             });
@@ -285,6 +289,7 @@ async fn drain_interjection_expands_skill_slash_reference() {
             // A steering interjection that only mentions the skill mid-text (no leading slash) stays untouched
             // The same gating applies at turn start, where "don't run /commit yet" is not an invocation
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: "don't run /find-session yet".to_string(),
                 attachments: vec![],
             });
@@ -311,6 +316,7 @@ async fn drain_interjection_truncation_never_touches_image_data() {
             // Way over LARGE_PROMPT_THRESHOLD so the text path truncates.
             let huge_text = "x".repeat(3_000_000);
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: huge_text,
                 attachments: vec![original_image.clone()],
             });
@@ -349,10 +355,12 @@ async fn cancelled_drain_restores_entries_for_stranded_flush() {
         .run_until(async {
             let (actor, _rx) = build_actor().await;
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: "first steer".to_string(),
                 attachments: vec![],
             });
             actor.pending_interjections.push(PendingInterjection {
+                id: None,
                 text: "second steer".to_string(),
                 attachments: vec![],
             });
@@ -413,6 +421,7 @@ async fn interjection_fallback_prompt_queues_front_with_prefix() {
                 .queue_interjection_fallback_prompt(
                     "steer now".to_string(),
                     vec![test_image_content()],
+                    Some("fallback-original-id".into()),
                     true,
                 )
                 .await;
@@ -439,6 +448,10 @@ async fn interjection_fallback_prompt_queues_front_with_prefix() {
                 ),
                 "image blocks ride along"
             );
+            assert_eq!(front.input_origin.interjection(), Some(&xai_grok_sampling_types::InterjectionIdentity {
+                id: "fallback-original-id".into(),
+                display_text: "steer now".into(),
+            }));
             assert!(front.queue_meta.is_none(), "not a shared-queue row");
             assert_eq!(
                 state.pending_inputs.get(1).map(|i| i.prompt_id.as_str()),
@@ -464,10 +477,12 @@ async fn flush_stranded_interjections_converts_to_front_prompts_in_order() {
                     .push_back(user_item("queued-later", "A"));
             }
             actor.pending_interjections.push(PendingInterjection {
+                id: Some("stranded-first".into()),
                 text: "first steer".to_string(),
                 attachments: vec![],
             });
             actor.pending_interjections.push(PendingInterjection {
+                id: Some("stranded-second".into()),
                 text: "second steer".to_string(),
                 attachments: vec![],
             });
@@ -479,6 +494,8 @@ async fn flush_stranded_interjections_converts_to_front_prompts_in_order() {
             );
 
             let state = actor.state.lock().await;
+            assert_eq!(state.pending_inputs.iter().map(|item| item.input_origin.interjection().map(|identity| identity.id.as_str())).collect::<Vec<_>>(),
+                vec![Some("stranded-first"), Some("stranded-second"), None]);
             let texts: Vec<String> = state
                 .pending_inputs
                 .iter()
@@ -531,7 +548,7 @@ async fn fallback_prompt_lands_behind_running_front() {
                 .expect("current_prompt_id mutex poisoned") = Some("running".into());
 
             actor
-                .queue_interjection_fallback_prompt("urgent".to_string(), vec![], true)
+                .queue_interjection_fallback_prompt("urgent".to_string(), vec![], None, true)
                 .await;
 
             let state = actor.state.lock().await;
@@ -567,7 +584,7 @@ async fn fallback_prompt_respects_active_plan_mode() {
             }
 
             actor
-                .queue_interjection_fallback_prompt("plan steer".to_string(), vec![], true)
+                .queue_interjection_fallback_prompt("plan steer".to_string(), vec![], None, true)
                 .await;
 
             let state = actor.state.lock().await;
@@ -579,4 +596,56 @@ async fn fallback_prompt_respects_active_plan_mode() {
             );
         })
         .await;
+}
+
+#[tokio::test]
+async fn interjection_identity_survives_drain_history_roundtrip_and_image_chunks() {
+    tokio::task::LocalSet::new().run_until(async {
+        let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+        let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+        for id in ["first", "second"] {
+            actor.pending_interjections.push(PendingInterjection {
+                id: Some(id.into()),
+                text: "same [Image #1]".into(),
+                attachments: vec![test_image_content()],
+            });
+        }
+        assert!(actor.drain_pending_interjections().await);
+        assert!(!actor.drain_pending_interjections().await);
+        let conversation = actor.chat_state_handle.get_conversation().await;
+        let restored: Vec<ConversationItem> = serde_json::from_value(serde_json::to_value(&conversation).unwrap()).unwrap();
+        let users: Vec<_> = restored.iter().filter_map(|item| match item {
+            ConversationItem::User(user) if user.synthetic_reason == SyntheticReason::Interjection => Some(user),
+            _ => None,
+        }).collect();
+        assert_eq!(users.len(), 2, "one model-side admission per submitted identity");
+        assert_ne!(users[0].source, users[1].source);
+        for (user, expected) in users.iter().zip(["first", "second"]) {
+            let identity = user.interjection.as_ref().unwrap();
+            assert_eq!(identity.id, expected);
+            assert_eq!(identity.display_text, "same [Image #1]");
+            assert!(user.content.iter().any(|part| matches!(part, xai_grok_sampling_types::ContentPart::Image { .. })));
+        }
+        let mut chunks = Vec::new();
+        while let Ok(message) = persistence_rx.try_recv() {
+            if let PersistenceMsg::Update(crate::session::storage::SessionUpdate::Acp(notification)) = message
+                && let acp::SessionUpdate::UserMessageChunk(chunk) = &notification.update
+            {
+                chunks.push(chunk.clone());
+            }
+        }
+        assert_eq!(chunks.len(), 4, "one text and one image per submission");
+        for (pair, expected) in chunks.chunks_exact(2).zip(["first", "second"]) {
+            assert!(matches!(pair[0].content, acp::ContentBlock::Text(_)));
+            assert!(matches!(pair[1].content, acp::ContentBlock::Image(_)));
+            for chunk in pair {
+                let identity: xai_grok_sampling_types::InterjectionIdentity = serde_json::from_value(
+                    chunk.meta.as_ref().unwrap()["interjectionIdentity"].clone(),
+                ).unwrap();
+                assert_eq!(identity.id, expected);
+                assert_eq!(identity.display_text, "same [Image #1]");
+            }
+        }
+    }).await;
 }

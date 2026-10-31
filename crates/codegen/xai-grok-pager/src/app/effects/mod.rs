@@ -4680,6 +4680,7 @@ pub(crate) fn execute(
         }
         Effect::SendInterject {
             agent_id,
+            binding,
             session_id,
             text,
             interjection_id,
@@ -4689,6 +4690,7 @@ pub(crate) fn execute(
                 tasks,
                 acp_tx,
                 agent_id,
+                binding,
                 session_id,
                 vec![(text, interjection_id, blocks)],
             );
@@ -5818,6 +5820,7 @@ pub(crate) fn spawn_ordered_interjects(
     tasks: &mut JoinSet<TaskResult>,
     acp_tx: &AcpAgentTx,
     agent_id: crate::app::agent::AgentId,
+    binding: xai_grok_shell::session::current_actions::SnapshotBinding,
     session_id: acp::SessionId,
     items: Vec<(String, String, Option<Vec<acp::ContentBlock>>)>,
 ) {
@@ -5831,6 +5834,7 @@ pub(crate) fn spawn_ordered_interjects(
                     &text,
                     &interjection_id,
                     blocks.as_deref(),
+                    Some(&binding),
                 );
                 let request = acp::ExtRequest::new(
                     "x.ai/interject",
@@ -5845,6 +5849,7 @@ pub(crate) fn spawn_ordered_interjects(
                         .unwrap_or_else(|| e.to_string());
                     return TaskResult::InterjectFailed {
                         agent_id,
+                        binding,
                         error: sanitize_user_error(
                             &format!("couldn't send interjection: {detail}"),
                         ),
@@ -5854,6 +5859,7 @@ pub(crate) fn spawn_ordered_interjects(
             }
             TaskResult::InterjectQueued {
                 agent_id,
+                binding,
             }
         });
 }
@@ -5865,16 +5871,16 @@ pub(crate) fn take_coalesced_interjects(
     tasks: &mut JoinSet<TaskResult>,
     acp_tx: &AcpAgentTx,
 ) -> Option<Effect> {
-    let Effect::SendInterject { agent_id, session_id, text, interjection_id, blocks } = first
+    let Effect::SendInterject { agent_id, binding, session_id, text, interjection_id, blocks } = first
     else {
         return Some(first);
     };
     let mut items = vec![(text, interjection_id, blocks)];
     while let Some(
-        Effect::SendInterject { agent_id: next_agent, session_id: next_session, .. },
+        Effect::SendInterject { agent_id: next_agent, binding: next_binding, session_id: next_session, .. },
     ) = rest.peek()
     {
-        if *next_agent != agent_id || *next_session != session_id {
+        if *next_agent != agent_id || *next_session != session_id || *next_binding != binding {
             break;
         }
         let Some(Effect::SendInterject { text, interjection_id, blocks, .. }) = rest
@@ -5883,7 +5889,7 @@ pub(crate) fn take_coalesced_interjects(
         };
         items.push((text, interjection_id, blocks));
     }
-    spawn_ordered_interjects(tasks, acp_tx, agent_id, session_id, items);
+    spawn_ordered_interjects(tasks, acp_tx, agent_id, binding, session_id, items);
     None
 }
 /// Build the `x.ai/interject` params.
@@ -5894,12 +5900,16 @@ fn build_interject_params(
     text: &str,
     interjection_id: &str,
     blocks: Option<&[acp::ContentBlock]>,
+    binding: Option<&xai_grok_shell::session::current_actions::SnapshotBinding>,
 ) -> serde_json::Value {
     let mut params = serde_json::json!({
         "sessionId": session_id.0.to_string(),
         "text": text,
         "interjectionId": interjection_id,
     });
+    if let Some(binding) = binding {
+        params["currentActionsBinding"] = serde_json::json!(binding);
+    }
     if let Some(blocks) = blocks && let Some(obj) = params.as_object_mut() {
         obj.insert(
             "content".into(),

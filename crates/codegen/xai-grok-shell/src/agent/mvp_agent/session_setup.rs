@@ -680,6 +680,7 @@ impl MvpAgent {
                         )
                     }),
                     attach_waiter: None,
+                    completion_wake_policy: crate::session::completion_delivery::CompletionWakePolicy::Automatic,
                     chat_history,
                     rewind_points_file_path: None,
                     initial_total_tokens: 0,
@@ -717,6 +718,7 @@ impl MvpAgent {
             );
             self.spawn_and_register_session(init, spawn_opts, Some(spawn_trace))
                 .await
+                .and_then(super::agent_ops::SessionInstallOutcome::require_current)
         };
         #[cfg(all(feature = "local-workspace", unix))]
         if spawn_res.is_err() {
@@ -1348,8 +1350,7 @@ impl MvpAgent {
                         .map(|m| m.info().agent_type.clone()),
                 ),
             };
-            let load_is_current = self
-                .spawn_and_register_session(
+            self.spawn_and_register_session(
                     init,
                     SessionSpawnOptions {
                         session_info: session_info.clone(),
@@ -1363,6 +1364,7 @@ impl MvpAgent {
                             AttachOperation::ManageChild => None,
                         },
                         attach_waiter: Some(&load_guard.rx),
+                        completion_wake_policy: summary.completion_delivery.wake_policy,
                         chat_history,
                         rewind_points_file_path,
                         initial_total_tokens,
@@ -1394,10 +1396,8 @@ impl MvpAgent {
                         tracing::Span::current(),
                     )),
                 )
-                .await?;
-            if !load_is_current {
-                return Err(acp::Error::invalid_params().data("session load was superseded"));
-            }
+                .await?
+                .require_current()?;
             self.prewarm_final_model_base_url(
                 &session_id,
                 &persisted_base_url,
@@ -1551,10 +1551,11 @@ impl MvpAgent {
                 .send(SessionCommand::RestoreCompletionWakePolicy(
                     summary.completion_delivery.wake_policy,
                 ));
-            match restart_recovery.admission() {
-                xai_grok_tools::types::restart_recovery::RestartAdmission::Unaffected
-                | xai_grok_tools::types::restart_recovery::RestartAdmission::Reactivated { .. }
-                | xai_grok_tools::types::restart_recovery::RestartAdmission::NewSession { .. } => {
+            use crate::session::completion_delivery::CompletionWakePolicy;
+            use xai_grok_tools::types::restart_recovery::RestartAdmission;
+            match (restart_recovery.admission(), summary.completion_delivery.wake_policy) {
+                (RestartAdmission::Unaffected | RestartAdmission::Reactivated { .. }
+                | RestartAdmission::NewSession { .. }, CompletionWakePolicy::Automatic) => {
                     let deliveries =
                         summary.completion_delivery.receiver.recoverable_ids();
                     if !deliveries.is_empty() {
@@ -1610,7 +1611,9 @@ impl MvpAgent {
                         }
                     }
                 }
-                xai_grok_tools::types::restart_recovery::RestartAdmission::Quiescent { .. } => {
+                (RestartAdmission::Unaffected | RestartAdmission::Reactivated { .. }
+                | RestartAdmission::NewSession { .. }, CompletionWakePolicy::HumanStopped) => {}
+                (RestartAdmission::Quiescent { .. }, CompletionWakePolicy::Automatic | CompletionWakePolicy::HumanStopped) => {
                     use crate::session::completion_delivery::{
                         CompletionObligation, CompletionSuppression,
                     };
@@ -1673,7 +1676,9 @@ impl MvpAgent {
             let _ = handle.cmd_tx.send(SessionCommand::AdvertiseCommands {
                 trigger: crate::session::AdvertiseTrigger::SessionLoad,
             });
-            if restored.awaiting_plan_approval && restart_recovery.admission().permits_recovery() {
+            if restored.awaiting_plan_approval && restart_recovery.admission().permits_recovery()
+                && summary.completion_delivery.wake_policy == crate::session::completion_delivery::CompletionWakePolicy::Automatic
+            {
                 let _ = handle.cmd_tx.send(SessionCommand::RestorePlanApproval);
             }
         }

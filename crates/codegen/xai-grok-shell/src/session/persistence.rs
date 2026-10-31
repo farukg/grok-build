@@ -369,7 +369,15 @@ pub enum PersistenceMsg {
     RecoverSubagentCompletions {
         respond_to: tokio::sync::oneshot::Sender<io::Result<Summary>>,
     },
-    CompletionWakePolicy(super::completion_delivery::CompletionWakePolicy),
+    SealHumanStoppedCompletions {
+        ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+        workflow_episodes: Vec<super::workflow::tracker::WorkflowEpisodeId>,
+        respond_to: oneshot::Sender<io::Result<()>>,
+    },
+    CompletionWakePolicy {
+        policy: super::completion_delivery::CompletionWakePolicy,
+        respond_to: oneshot::Sender<io::Result<()>>,
+    },
     AppendInputAndAck {
         projection: xai_chat_state::InputProjection,
         admission: xai_chat_state::InputAdmission,
@@ -2820,14 +2828,21 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::CompletionWakePolicy(policy) => {
-                    if let Err(error) = self
-                        .storage
-                        .set_completion_wake_policy(&self.info, policy)
-                        .await
-                    {
-                        self.note_write_failure(&error);
-                    }
+                PersistenceMsg::SealHumanStoppedCompletions { ids, workflow_episodes, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => self.storage.seal_human_stopped_completions(&self.info, ids, workflow_episodes).await,
+                        Err(error) => Err(error),
+                    };
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::CompletionWakePolicy { policy, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => self.storage.set_completion_wake_policy(&self.info, policy).await,
+                        Err(error) => Err(error),
+                    };
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
                 }
                 PersistenceMsg::AppendInputAndAck {
                     mut projection,

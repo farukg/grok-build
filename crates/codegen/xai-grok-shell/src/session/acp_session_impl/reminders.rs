@@ -687,13 +687,31 @@ impl SessionActor {
         if goal_loop_active {
             return;
         }
-        let (restored, fresh) = {
+        let (mut restored, mut fresh) = {
             let tracker = self.workflow_tracker().await;
             let mut tracker = tracker.lock();
             tracker.take_unreported_terminal_runs()
         };
         if restored.is_empty() && fresh.is_empty() {
             return;
+        }
+        let completion_state = match self.persisted_completion_state().await {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::error!(%error, "workflow reminder admission unavailable");
+                return;
+            }
+        };
+        if completion_state.wake_policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped {
+            return;
+        }
+        for runs in [&mut restored, &mut fresh] {
+            runs.retain(|run| !completion_state.workflow_episode_stopped(&run.episode())
+                && !completion_state.is_suppressed(
+                    &xai_chat_state::completion::TerminalCompletionId::Workflow {
+                        run_id: run.run_id.clone(), revision: run.revision,
+                    }.into(),
+                ));
         }
         let names = |runs: &[crate::session::workflow::tracker::WorkflowRunState]| {
             runs.iter().map(|r| r.name.clone()).collect::<Vec<_>>()
@@ -943,6 +961,7 @@ mod workflow_reminder_tests {
         WorkflowRunState {
             run_id: "wf_1".to_owned(),
             revision: 2,
+            execution_epoch: 0,
             name: "demo".to_owned(),
             objective: "exercise formatter".to_owned(),
             status: WorkflowRunStatus::Failed,

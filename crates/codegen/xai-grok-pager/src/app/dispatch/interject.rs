@@ -29,7 +29,7 @@ pub(super) fn dispatch_interject_on(
     text: String,
     images: Vec<crate::prompt_images::PastedImage>,
 ) -> Vec<Effect> {
-    dispatch_interject_on_inner(app, id, text, images, /* user_submit */ true)
+    dispatch_interject_on_inner(app, id, text, images, /* user_submit */ true, None)
 }
 
 /// Wait-start / Enter flush: same wire send, without submit side effects (voice stop, history, toast).
@@ -38,8 +38,9 @@ pub(super) fn dispatch_interject_from_held_queue(
     id: AgentId,
     text: String,
     images: Vec<crate::prompt_images::PastedImage>,
+    original_id: Option<String>,
 ) -> Vec<Effect> {
-    dispatch_interject_on_inner(app, id, text, images, /* user_submit */ false)
+    dispatch_interject_on_inner(app, id, text, images, /* user_submit */ false, original_id)
 }
 
 fn dispatch_interject_on_inner(
@@ -48,6 +49,7 @@ fn dispatch_interject_on_inner(
     text: String,
     images: Vec<crate::prompt_images::PastedImage>,
     user_submit: bool,
+    original_id: Option<String>,
 ) -> Vec<Effect> {
     // Voice is app-wide and bound to the focused composer
     // A /btw answer on another session must not commit interim text or kill dictation on the pane the user is actually talking into
@@ -64,34 +66,50 @@ fn dispatch_interject_on_inner(
         agent.release_hook_block_hold();
     }
 
-    let Some(session_id) = agent.session.session_id.clone() else {
+    if agent.session.session_id.is_none() {
         agent.show_toast(NO_SESSION_NOTICE);
         return vec![];
-    };
+    }
 
     if user_submit {
         agent.record_prompt_in_history(&text);
     }
 
+    if user_submit {
+        agent.show_toast("Interjection sent");
+    }
+    prepare_interjection(agent, text, images, original_id, &mut app.pending_image_notices)
+        .into_iter().collect()
+}
+
+pub(super) fn prepare_interjection(
+    agent: &mut crate::app::agent_view::AgentView,
+    text: String,
+    images: Vec<crate::prompt_images::PastedImage>,
+    original_id: Option<String>,
+    notices: &mut Vec<String>,
+) -> Option<Effect> {
+    let session_id = agent.session.session_id.clone()?;
     // Push a standard user prompt block locally for instant feedback
     // Record its id so the broadcast echo (`x.ai/session/interjection`) is deduped instead of rendering a second copy on this pane
-    let interjection_id = uuid::Uuid::new_v4().to_string();
+    let Some(binding) = agent.current_actions_binding() else {
+        return None;
+    };
+    let interjection_id = original_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    if agent.session.tracker.accepted_interjection(&interjection_id) {
+        return None;
+    }
     agent.self_interjection_ids.insert(interjection_id.clone());
     let entry_id = agent
         .scrollback
         .push_block(RenderBlock::interjection_prompt(&text));
+    agent.session.tracker.bind_interjection(&interjection_id, entry_id);
     agent
         .interjection_painted_blocks
         .insert(interjection_id.clone(), entry_id);
     agent
         .interjection_retry_images
         .insert(interjection_id.clone(), images.clone());
-
-    // The composer is NOT touched here: the producer that consumed composer text (the InterjectPrompt registry arm) clears it at the call site
-    // Every other producer (Send now, edit-interject, plan review comments) carries non-composer text and must keep the user's draft/stash
-    if user_submit {
-        agent.show_toast("Interjection sent");
-    }
 
     // Image-bearing interjection: build text and image content blocks via the same helper as the queued-prompt drain path
     // The helper covers orphan-placeholder recovery, the allowlist, and the size cap. Text-only stays on the legacy wire.
@@ -103,18 +121,18 @@ fn dispatch_interject_on_inner(
             images,
             Some(std::path::Path::new(&agent.session.cwd)),
         );
-        app.pending_image_notices
-            .extend(agent.skipped_image_send_notice(&build.skipped_display_numbers));
+        notices.extend(agent.skipped_image_send_notice(&build.skipped_display_numbers));
         Some(build.blocks)
     };
 
-    vec![Effect::SendInterject {
-        agent_id: id,
+    Some(Effect::SendInterject {
+        agent_id: agent.session.id,
+        binding,
         session_id,
         text,
         interjection_id,
         blocks,
-    }]
+    })
 }
 
 /// Cancel-and-send: send `text` (and images) as a fresh `sendNow` prompt so the shell cancels the running turn and runs it next.

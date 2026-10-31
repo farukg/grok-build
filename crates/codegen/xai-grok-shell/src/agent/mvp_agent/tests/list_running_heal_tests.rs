@@ -13,6 +13,7 @@ fn running_meta(id: &str, parent: &str) -> SubagentMeta {
     SubagentMeta {
         subagent_id: id.into(),
         recorded_owner: None,
+        recorded_spawner: None,
         attempt_id: None,
         parent_session_id: parent.into(),
         child_session_id: format!("child-{id}"),

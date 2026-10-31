@@ -18,6 +18,7 @@ mod copy;
 mod delivery_receiver;
 pub mod history_decoder;
 mod history_images;
+pub mod interjection;
 #[cfg(test)]
 use history_images::MAX_LOADED_IMAGE_BYTES;
 pub(crate) use history_images::strip_invalid_images;
@@ -56,29 +57,31 @@ type SessionSyncProbe = dyn Fn(super::SessionFileSet) -> io::Result<()> + Send +
 type FileSyncProbe = dyn Fn() -> io::Result<()> + Send + Sync;
 #[cfg(test)]
 type ParentSyncProbe = dyn Fn() -> io::Result<()> + Send + Sync;
-/// `Committed` means `write_all` succeeded: the record is in the file (at least the page cache) and a later fsync can still make it durable.
+/// `Indeterminate` may have written a prefix, including complete JSON without its newline.
+/// `Committed` completed the write but failed a later durability barrier.
 #[derive(Debug)]
 enum AppendLineError {
     NotCommitted(io::Error),
+    Indeterminate(io::Error),
     Committed(io::Error),
 }
 impl AppendLineError {
     fn into_io_error(self) -> io::Error {
         match self {
-            Self::NotCommitted(error) | Self::Committed(error) => error,
+            Self::NotCommitted(error) | Self::Indeterminate(error) | Self::Committed(error) => error,
         }
     }
     fn into_update_error(self) -> super::AppendUpdateError {
         match self {
             Self::NotCommitted(error) => super::AppendUpdateError::NotCommitted(error),
-            Self::Committed(error) => super::AppendUpdateError::Committed(error),
+            Self::Indeterminate(error) | Self::Committed(error) => super::AppendUpdateError::Committed(error),
         }
     }
 }
 impl std::fmt::Display for AppendLineError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotCommitted(error) | Self::Committed(error) => error.fmt(formatter),
+            Self::NotCommitted(error) | Self::Indeterminate(error) | Self::Committed(error) => error.fmt(formatter),
         }
     }
 }
@@ -528,9 +531,7 @@ impl JsonlStorageAdapter {
         .await
         .map_err(io::Error::other)?
     }
-    /// Append one JSONL record, healing a torn tail before writing.
-    /// Appends are not crash-atomic: a process kill / `ENOSPC` mid-`write_all` leaves the file ending in a *partial* record with no trailing newline.
-    /// Before writing, check the last byte: if it isn't `\n`, prepend one so the torn record is terminated as its own (single) corrupt line.
+    /// Appends are not crash-atomic. Terminate an unterminated tail without discarding it: it may already contain complete JSON.
     fn append_jsonl_line_sync(
         path: &Path,
         line: Vec<u8>,
@@ -556,8 +557,19 @@ impl JsonlStorageAdapter {
     }
     fn append_jsonl_line_unlocked_with(
         path: &Path,
+        line: Vec<u8>,
+        durability: AppendDurability,
+        sync_file: impl FnMut(&std::fs::File) -> io::Result<()>,
+        sync_parent: impl FnMut() -> io::Result<()>,
+    ) -> Result<(), AppendLineError> {
+        Self::append_jsonl_line_unlocked_with_write(path, line, durability,
+            |file, bytes| file.write_all(bytes), sync_file, sync_parent)
+    }
+    fn append_jsonl_line_unlocked_with_write(
+        path: &Path,
         mut line: Vec<u8>,
         durability: AppendDurability,
+        write: impl FnOnce(&mut std::fs::File, &[u8]) -> io::Result<()>,
         mut sync_file: impl FnMut(&std::fs::File) -> io::Result<()>,
         mut sync_parent: impl FnMut() -> io::Result<()>,
     ) -> Result<(), AppendLineError> {
@@ -582,13 +594,12 @@ impl JsonlStorageAdapter {
                 if last[0] != b'\n' {
                     tracing::warn!(
                         path = %path.display(),
-                        "jsonl file has a torn trailing line (previous append crashed mid-write?); terminating it before appending"
+                        "jsonl file has an unterminated trailing line; terminating it before appending"
                     );
                     line.insert(0, b'\n');
                 }
             }
-            file.write_all(&line)
-                .map_err(AppendLineError::NotCommitted)?;
+            write(&mut file, &line).map_err(AppendLineError::Indeterminate)?;
             file.flush().map_err(AppendLineError::Committed)?;
             if matches!(durability, AppendDurability::Durable) {
                 sync_file(&file).map_err(AppendLineError::Committed)?;
@@ -807,7 +818,7 @@ impl JsonlStorageAdapter {
             .map_err(AppendLineError::into_update_error)
         })
         .await
-        .map_err(|error| super::AppendUpdateError::NotCommitted(io::Error::other(error)))?
+        .map_err(|error| super::AppendUpdateError::Committed(io::Error::other(error)))?
     }
     async fn append_update_with_bookkeeping(
         &self,
@@ -1153,6 +1164,7 @@ impl JsonlStorageAdapter {
                     )
                 },
             )?;
+        decoded.interjections().map_err(io::Error::other)?;
         let stripped = decoded.normalize_images();
         let skipped_lines = decoded.skipped_lines();
         let first_skipped = decoded.first_skipped();
@@ -1281,6 +1293,18 @@ async fn next_compaction_segment_index(compaction_dir: &std::path::Path) -> u64 
 }
 #[async_trait]
 impl StorageAdapter for JsonlStorageAdapter {
+    async fn lookup_interjection_receipt(&self, info: &Info, state: &interjection::InterjectionStorage, id: &str) -> Result<Option<xai_chat_state::interjection::InterjectionReceipt>, interjection::InterjectionStorageError> {
+        JsonlStorageAdapter::lookup_interjection_receipt(self, info, state, id).await
+    }
+    async fn persist_interjection_projection(&self, info: &Info, state: &interjection::InterjectionStorage, projection: interjection::InterjectionProjection) -> Result<interjection::InterjectionAppend, interjection::InterjectionStorageError> {
+        JsonlStorageAdapter::persist_interjection_projection(self, info, state, projection).await
+    }
+    async fn restore_interjections(&self, info: &Info) -> Result<(interjection::InterjectionStorage, xai_chat_state::interjection::InterjectionIndex), interjection::InterjectionStorageError> {
+        JsonlStorageAdapter::restore_interjections(self, info).await
+    }
+    async fn append_interjection_receipt(&self, info: &Info, state: &interjection::InterjectionStorage, receipt: &xai_chat_state::interjection::InterjectionReceipt) -> Result<interjection::InterjectionAppend, interjection::InterjectionStorageError> {
+        JsonlStorageAdapter::append_interjection_receipt(self, info, state, receipt).await
+    }
     async fn init_session(&self, info: &Info, model_id: acp::ModelId) -> io::Result<Summary> {
         self.create_session_dir_owner_only(info)?;
         let summary_path = self.summary_file(info);
@@ -1622,6 +1646,22 @@ impl StorageAdapter for JsonlStorageAdapter {
     }
     async fn recover_subagent_completions(&self, info: &Info) -> io::Result<Summary> {
         self.recover_completions(info).await
+    }
+    async fn seal_human_stopped_completions(
+        &self,
+        info: &Info,
+        ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+        workflow_episodes: Vec<crate::session::workflow::tracker::WorkflowEpisodeId>,
+    ) -> io::Result<()> {
+        self.apply_summary_patch(
+            info,
+            super::summary_write::SummaryPatch {
+                completion_mutation: Some(
+                    crate::session::completion_delivery::CompletionMutation::HumanStop { ids, workflow_episodes },
+                ),
+                ..Default::default()
+            },
+        ).await
     }
     async fn set_completion_wake_policy(
         &self,

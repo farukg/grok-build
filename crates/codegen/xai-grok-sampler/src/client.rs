@@ -420,6 +420,7 @@ pub struct SamplingClient {
     endpoint: EndpointTemplate,
     first_use_noted: Arc<AtomicBool>,
     capture: Option<crate::request_capture::CaptureAttempt>,
+    instruction_projection: Option<Arc<xai_grok_sampling_types::instruction_projection::ProviderInstructionPlan>>,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -781,12 +782,19 @@ impl SamplingClient {
             endpoint,
             first_use_noted: Arc::new(AtomicBool::new(false)),
             capture: None,
+            instruction_projection: None,
         })
     }
 
     pub(crate) fn with_capture(&self, capture: crate::request_capture::CaptureAttempt) -> Self {
         let mut client = self.clone();
         client.capture = Some(capture);
+        client
+    }
+
+    fn with_instruction_projection(&self, plan: xai_grok_sampling_types::instruction_projection::ProviderInstructionPlan) -> Self {
+        let mut client = self.clone();
+        client.instruction_projection = Some(Arc::new(plan));
         client
     }
 
@@ -1091,7 +1099,7 @@ impl SamplingClient {
                 .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         }
         if let Some(capture) = &self.capture {
-            capture.prepared(&json);
+            capture.prepared(&json, self.instruction_projection.as_deref());
         }
         let body = if should_compress(self.defaults.request_compression, json.len()) {
             match compress_body(&json).await {
@@ -2011,12 +2019,12 @@ impl SamplingClient {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
         let trace = request.trace.take();
-        let mut chat_request: ChatCompletionRequest = request.into();
+        let (mut chat_request, plan) = xai_grok_sampling_types::chat_request_with_instructions(request);
         if let Some(trace) = trace {
             chat_request.trace = Some(trace);
         }
 
-        self.chat_completion_stream(chat_request).await
+        self.with_instruction_projection(plan).chat_completion_stream(chat_request).await
     }
 
     /// Send a conversation request using the Chat Completions API (non-streaming).
@@ -2027,12 +2035,12 @@ impl SamplingClient {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
         let trace = request.trace.take();
-        let mut chat_request: ChatCompletionRequest = request.into();
+        let (mut chat_request, plan) = xai_grok_sampling_types::chat_request_with_instructions(request);
         if let Some(trace) = trace {
             chat_request.trace = Some(trace);
         }
 
-        self.chat_completion(chat_request).await
+        self.with_instruction_projection(plan).chat_completion(chat_request).await
     }
 
     /// Send a conversation request using the Responses API (streaming).
@@ -2049,12 +2057,12 @@ impl SamplingClient {
     )> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::responses_request(
+        let (wrapper, plan) = crate::request_body::responses_request(
             request,
             crate::request_body::BodyMode::Streaming,
         );
 
-        self.create_response_stream(wrapper).await
+        self.with_instruction_projection(plan).create_response_stream(wrapper).await
     }
 
     /// Send a conversation request using the Responses API (non-streaming).
@@ -2064,12 +2072,12 @@ impl SamplingClient {
     ) -> Result<rs::Response> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::responses_request(
+        let (wrapper, plan) = crate::request_body::responses_request(
             request,
             crate::request_body::BodyMode::NonStreaming,
         );
 
-        self.create_response(wrapper).await
+        self.with_instruction_projection(plan).create_response(wrapper).await
     }
 
     /// Send a conversation request using the Anthropic Messages API (streaming).
@@ -2082,12 +2090,12 @@ impl SamplingClient {
     )> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::messages_request(
+        let (wrapper, plan) = crate::request_body::messages_request(
             request,
             crate::request_body::BodyMode::Streaming,
         );
 
-        self.create_message_stream(wrapper).await
+        self.with_instruction_projection(plan).create_message_stream(wrapper).await
     }
 
     /// Send a conversation request using the Anthropic Messages API (non-streaming).
@@ -2097,12 +2105,12 @@ impl SamplingClient {
     ) -> Result<messages::MessagesResponse> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::messages_request(
+        let (wrapper, plan) = crate::request_body::messages_request(
             request,
             crate::request_body::BodyMode::NonStreaming,
         );
 
-        self.create_message(wrapper).await
+        self.with_instruction_projection(plan).create_message(wrapper).await
     }
 
     /// Backend-aware streaming call that collects the full response.

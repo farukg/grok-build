@@ -3,7 +3,26 @@ use tokio::sync::mpsc;
 
 async fn actor_with_channels() -> (SessionActor, mpsc::UnboundedReceiver<PersistenceMsg>) {
     let (gateway_tx, _gateway_rx) = mpsc::unbounded_channel();
-    let (persistence_tx, persistence_rx) = mpsc::unbounded_channel();
+    let (persistence_tx, mut requests) = mpsc::unbounded_channel();
+    let (observations, persistence_rx) = mpsc::unbounded_channel();
+    tokio::task::spawn_local(async move {
+        while let Some(request) = requests.recv().await {
+            let request = match request {
+                PersistenceMsg::CompletionWakePolicy { policy, respond_to } => {
+                    let _ = respond_to.send(Ok(()));
+                    let (respond_to, _) = oneshot::channel();
+                    PersistenceMsg::CompletionWakePolicy { policy, respond_to }
+                }
+                PersistenceMsg::SealHumanStoppedCompletions { ids, workflow_episodes, respond_to } => {
+                    let _ = respond_to.send(Ok(()));
+                    let (respond_to, _) = oneshot::channel();
+                    PersistenceMsg::SealHumanStoppedCompletions { ids, workflow_episodes, respond_to }
+                }
+                other => other,
+            };
+            let _ = observations.send(request);
+        }
+    });
     let actor =
         super::super::support::create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
     (actor, persistence_rx)
@@ -47,6 +66,187 @@ fn persisted_goal_status(
         }
     }
     statuses
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stop_waits_for_policy_ack_and_never_settles_a_failed_or_lost_commit() {
+    enum Failure { Write, LostAck, ClosedOwner }
+    tokio::task::LocalSet::new().run_until(async {
+        for failure in [Failure::Write, Failure::LostAck, Failure::ClosedOwner] {
+            let (gateway, _notifications) = mpsc::unbounded_channel();
+            let (persistence, mut requests) = mpsc::unbounded_channel();
+            let actor = Arc::new(super::super::support::create_test_actor(0, 256_000, 85, gateway, persistence).await);
+            if matches!(failure, Failure::ClosedOwner) { requests.close(); }
+            let cancel = tokio::task::spawn_local({
+                let actor = actor.clone();
+                async move {
+                    actor.cancel_running_task(crate::session::CancelOptions {
+                        trigger: Some(crate::session::CancelTrigger::CtrlC),
+                        user_initiated: true, ..Default::default()
+                    }).await
+                }
+            });
+            match failure {
+                Failure::Write | Failure::LostAck => {
+                    let PersistenceMsg::CompletionWakePolicy { policy, respond_to } = requests.recv().await.unwrap() else {
+                        panic!("Stop must first commit its policy");
+                    };
+                    assert_eq!(policy, crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+                    assert!(!cancel.is_finished(), "Stop cannot settle before its policy ACK");
+                    assert!(wake_barrier_armed(&actor));
+                    match failure {
+                        Failure::Write => { respond_to.send(Err(std::io::Error::other("injected policy write failure"))).unwrap(); }
+                        Failure::LostAck => drop(respond_to),
+                        Failure::ClosedOwner => unreachable!(),
+                    }
+                }
+                Failure::ClosedOwner => {}
+            }
+            let outcome = cancel.await.unwrap();
+            assert!(!outcome.settled);
+            assert!(matches!(outcome.policy, StopPolicyCommit::Failed(_)));
+            assert_eq!(outcome.barrier, WakeBarrier::Armed);
+            assert!(wake_barrier_armed(&actor));
+            assert!(actor.state.lock().await.notifications_suppressed);
+        }
+    }).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn live_failed_stop_releases_exact_turn_before_subsequent_human_input() {
+    enum Failure { Write, LostAck, ClosedOwner, RevocationClosed, RevocationLostAck, RevocationError, SuppressionWrite, SuppressionLostAck }
+    tokio::task::LocalSet::new().run_until(async {
+        for failure in [Failure::Write, Failure::LostAck, Failure::ClosedOwner, Failure::RevocationClosed, Failure::RevocationLostAck, Failure::RevocationError, Failure::SuppressionWrite, Failure::SuppressionLostAck] {
+            let (gateway, _notifications) = mpsc::unbounded_channel();
+            let (persistence, mut requests) = mpsc::unbounded_channel();
+            let mut actor = super::super::support::create_test_actor(0, 256_000, 85, gateway, persistence).await;
+            let (children, mut child_requests) = mpsc::unbounded_channel();
+            if matches!(failure, Failure::RevocationClosed | Failure::RevocationLostAck | Failure::RevocationError) {
+                actor.tool_context.subagent_event_tx = Some(children);
+            }
+            if matches!(failure, Failure::RevocationClosed) { child_requests.close(); }
+            let actor = Arc::new(actor);
+            let epoch = actor.turn_report.start_next_turn();
+            let runner = tokio::task::spawn_local(std::future::pending::<()>());
+            let identity = {
+                let mut state = actor.state.lock().await;
+                state.pending_inputs.push_back(super::super::support::user_item("failed-stop-live", "owner"));
+                let task = AgentTask::new_at_epoch("failed-stop-live", epoch, runner.abort_handle());
+                let identity = task.identity.clone();
+                state.running_task = Some(task);
+                identity
+            };
+            if matches!(failure, Failure::ClosedOwner) { requests.close(); }
+            let cancel = tokio::task::spawn_local({
+                let actor = actor.clone();
+                async move {
+                    actor.cancel_running_task(crate::session::CancelOptions {
+                        trigger: Some(crate::session::CancelTrigger::CtrlC),
+                        user_initiated: true, ..Default::default()
+                    }).await
+                }
+            });
+            match failure {
+                Failure::Write | Failure::LostAck | Failure::RevocationClosed | Failure::RevocationLostAck
+                | Failure::RevocationError | Failure::SuppressionWrite | Failure::SuppressionLostAck => {
+                    let PersistenceMsg::CompletionWakePolicy { policy, respond_to } = requests.recv().await.unwrap() else {
+                        panic!("Stop must first commit its policy");
+                    };
+                    assert_eq!(policy, crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+                    assert!(!cancel.is_finished(), "Stop cannot settle before its policy ACK");
+                    assert!(wake_barrier_armed(&actor));
+                    match failure {
+                        Failure::Write => { respond_to.send(Err(std::io::Error::other("injected policy write failure"))).unwrap(); }
+                        Failure::LostAck => drop(respond_to),
+                        Failure::RevocationClosed | Failure::RevocationLostAck | Failure::RevocationError
+                        | Failure::SuppressionWrite | Failure::SuppressionLostAck => { respond_to.send(Ok(())).unwrap(); }
+                        Failure::ClosedOwner => unreachable!(),
+                    }
+                }
+                Failure::ClosedOwner => {}
+            }
+            if matches!(failure, Failure::RevocationLostAck) {
+                drop(child_requests.recv().await.unwrap());
+            }
+            if matches!(failure, Failure::RevocationError) {
+                let xai_grok_tools::implementations::grok_build::task::types::SubagentEvent::RevokeParentSession { respond_to, .. } = child_requests.recv().await.unwrap() else {
+                    panic!("Stop must request parent revocation");
+                };
+                respond_to.send(Err(xai_grok_tools::implementations::grok_build::task::types::SubagentAccessError::ParentSessionUnavailable)).unwrap();
+            }
+            if matches!(failure, Failure::SuppressionWrite | Failure::SuppressionLostAck) {
+                let PersistenceMsg::SealHumanStoppedCompletions { respond_to, .. } = requests.recv().await.unwrap() else {
+                    panic!("Stop must seal registered identities");
+                };
+                assert!(!cancel.is_finished(), "Stop cannot settle before its suppression ACK");
+                assert!(wake_barrier_armed(&actor));
+                if matches!(failure, Failure::SuppressionWrite) {
+                    respond_to.send(Err(std::io::Error::other("injected suppression write failure"))).unwrap();
+                } else {
+                    drop(respond_to);
+                }
+            }
+            let persistence_drain = tokio::task::spawn_local(async move {
+                while let Some(request) = requests.recv().await {
+                    match request {
+                        PersistenceMsg::FlushAndAck { respond_to }
+                        | PersistenceMsg::CompletionWakePolicy { respond_to, .. }
+                        | PersistenceMsg::SealHumanStoppedCompletions { respond_to, .. } => {
+                            let _ = respond_to.send(Ok(()));
+                        }
+                        PersistenceMsg::AppendUpdateDurablyAndAck { respond_to, .. } => {
+                            let _ = respond_to.send(Ok(()));
+                        }
+                        _ => {}
+                    }
+                }
+            });
+            let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), cancel).await.unwrap().unwrap();
+            assert!(!outcome.settled);
+            let StopPolicyCommit::Failed(error) = outcome.policy else { panic!("failed Stop must retain its error") };
+            let expected = match failure {
+                Failure::Write => "injected policy write failure",
+                Failure::LostAck => "Stop policy commit acknowledgement lost",
+                Failure::ClosedOwner => "Stop policy persistence owner closed",
+                Failure::RevocationClosed => "Stop child revocation owner closed: Subagent request not confirmed: coordinator unavailable or response lost",
+                Failure::RevocationLostAck => "Stop child revocation acknowledgement lost",
+                Failure::RevocationError => "Parent session is not bound to this backend",
+                Failure::SuppressionWrite => "injected suppression write failure",
+                Failure::SuppressionLostAck => "Stop suppression commit acknowledgement lost",
+            };
+            assert_eq!(error.to_string(), expected);
+            assert_eq!(outcome.barrier, WakeBarrier::Armed);
+            assert!(wake_barrier_armed(&actor));
+            assert!(actor.state.lock().await.notifications_suppressed);
+            assert!(runner.await.unwrap_err().is_cancelled());
+            {
+                let state = actor.state.lock().await;
+                assert!(state.running_task.is_none());
+                assert!(!state.finalization_gate.is_active());
+            }
+            assert!(!actor.handle_completion(
+                "failed-stop-live".into(), epoch, &identity,
+                Ok(PromptTurnOk {
+                    stop_reason: acp::StopReason::EndTurn, total_tokens: 0, turn_snapshot: None,
+                    completion_kind: PromptCompletionKind::Completed, structured_output: None,
+                    usage: None, tool_overrides: None,
+                }), None,
+            ).await);
+            let (respond_to, _response) = oneshot::channel();
+            assert!(!actor.queue_input(QueueInputRequest::from_legacy_prompt_id(
+                vec![acp::ContentBlock::Text(acp::TextContent::new("new human input"))],
+                "after-failed-stop".into(), PromptMode::Agent, respond_to,
+            )).await);
+            let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
+            actor.clone().maybe_start_running_task(completion_tx).await;
+            let state = actor.state.lock().await;
+            assert_eq!(state.running_prompt_id(), Some("after-failed-stop"));
+            assert!(wake_barrier_armed(&actor), "promotion is not Stop authority");
+            state.running_task.as_ref().unwrap().abort();
+            drop(state);
+            persistence_drain.abort();
+        }
+    }).await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -133,7 +333,7 @@ async fn stop_gesture_without_goal_only_arms_the_barrier() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn idle_stop_preserves_queued_workflow_obligation_without_a_fallback() {
+async fn idle_stop_removes_old_queued_work_without_faking_a_producer_terminal() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let (actor, _persistence_rx) = actor_with_channels().await;
@@ -154,21 +354,15 @@ async fn idle_stop_preserves_queued_workflow_obligation_without_a_fallback() {
             assert_eq!(outcome.barrier, WakeBarrier::Armed);
             let state = actor.state.lock().await;
             assert!(state.running_task.is_none());
-            assert_eq!(state.pending_inputs.len(), 1);
-            assert_eq!(
-                state.pending_inputs.front().unwrap().prompt_id,
-                "workflow-completed-parked-0"
-            );
-            assert!(matches!(
-                receipt.try_recv(),
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-            ));
+            assert!(state.pending_inputs.is_empty());
+            let removed = receipt.try_recv().unwrap().unwrap();
+            assert!(matches!(removed.completion_kind, PromptCompletionKind::RemovedFromQueue));
         })
         .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn clear_wake_suppression_re_admits_wakes_and_persists_automatic() {
+async fn generic_resume_preserves_explicit_stop() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -185,30 +379,19 @@ async fn clear_wake_suppression_re_admits_wakes_and_persists_automatic() {
             assert!(!outcome.turn_stopped);
             assert!(wake_barrier_armed(&actor));
 
-            actor.clear_wake_suppression("goal_resume").await;
+            for authority in [WakeReengagement::GoalResume, WakeReengagement::SendNow, WakeReengagement::Rewind] {
+                actor.clear_wake_suppression(authority).await.unwrap();
+                assert!(wake_barrier_armed(&actor));
+                assert!(actor.state.lock().await.notifications_suppressed);
+            }
 
-            assert!(!wake_barrier_armed(&actor), "the live gate must clear");
-            assert!(
-                !actor.state.lock().await.notifications_suppressed,
-                "notification suppression must clear"
-            );
-            let saw_automatic = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-                while let Some(msg) = persistence_rx.recv().await {
-                    if let PersistenceMsg::CompletionWakePolicy(
-                        crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-                    ) = msg
-                    {
-                        return true;
-                    }
-                }
-                false
-            })
-            .await
-            .expect("wake policy must reach the persistence observer");
-            assert!(
-                saw_automatic,
-                "the clear must persist the Automatic policy so the barrier cannot survive a restart"
-            );
+            assert!(wake_barrier_armed(&actor));
+            assert!(actor.state.lock().await.notifications_suppressed);
+            while let Ok(msg) = persistence_rx.try_recv() {
+                assert!(!matches!(msg, PersistenceMsg::CompletionWakePolicy {
+                    policy: crate::session::completion_delivery::CompletionWakePolicy::Automatic, ..
+                }));
+            }
         })
         .await;
 }

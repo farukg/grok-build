@@ -79,7 +79,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         for output in self.terminal_outputs.values_mut() {
             match output {
                 TerminalOutput::Finishing(_) => {}
-                TerminalOutput::Committing { completion, recipient } => {
+                TerminalOutput::Committing { completion, recipient, .. } => {
                     if completion.request.parent_session_id == finished_session
                         || recipient.session_id() == Some(finished_session)
                     {

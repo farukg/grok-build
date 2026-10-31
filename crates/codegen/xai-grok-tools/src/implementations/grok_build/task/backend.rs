@@ -378,35 +378,31 @@ impl ChannelBackend {
         response_rx.await.unwrap_or(SubagentCancelOutcome::NotFound)
     }
 
-    /// User Stop: cancel all non-workflow children for this parent session. Requires
-    /// [`Self::for_session`]; unbound backends return `NotFound` and do not broadcast a wildcard
-    /// cancel.
-    pub async fn cancel_parent_session(&self) -> SubagentCancelOutcome {
+    /// Revoke submissions and capture registered producer identities, not producer completion.
+    pub async fn cancel_parent_session(
+        &self,
+    ) -> Result<super::types::ParentSessionRevocation, SubagentAccessError> {
         let (respond_to, response_rx) = oneshot::channel();
-        if !self.request_cancel_parent_session(ChildCancellation::Authorized, respond_to) {
-            return SubagentCancelOutcome::NotFound;
-        }
-        response_rx.await.unwrap_or(SubagentCancelOutcome::NotFound)
+        self.request_cancel_parent_session(ChildCancellation::Authorized, respond_to)?;
+        response_rx.await.map_err(|_| SubagentAccessError::CoordinatorUnavailable)?
     }
 
-    /// Fire-and-forget session cancellation with the caller's typed intent.
-    /// Returns false when the backend is unbound or the channel is closed.
+    /// The caller must await the revocation ACK before persisting stop tombstones.
     pub fn request_cancel_parent_session(
         &self,
         intent: ChildCancellation,
-        respond_to: oneshot::Sender<SubagentCancelOutcome>,
-    ) -> bool {
-        let Some(parent_session_id) = self.parent_session_id() else {
-            return false;
-        };
+        respond_to: oneshot::Sender<Result<super::types::ParentSessionRevocation, SubagentAccessError>>,
+    ) -> Result<(), SubagentAccessError> {
+        let parent_session_id = self.parent_session_id()
+            .ok_or(SubagentAccessError::ParentSessionUnavailable)?;
         self.tx
             .event_sender()
-            .send(SubagentEvent::Cancel(SubagentCancelRequest {
-                parent_session_id: Some(parent_session_id),
-                target: SubagentCancelTarget::ParentSession(intent),
+            .send(SubagentEvent::RevokeParentSession {
+                parent_session_id,
+                intent,
                 respond_to,
-            }))
-            .is_ok()
+            })
+            .map_err(|_| SubagentAccessError::CoordinatorUnavailable)
     }
 
     /// Re-open Task spawns after a prior ParentSession stop (start of next turn).

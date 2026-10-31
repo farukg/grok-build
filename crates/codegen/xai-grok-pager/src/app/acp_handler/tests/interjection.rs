@@ -292,3 +292,404 @@
             "an interjection from another pane must render"
         );
     }
+
+    #[derive(Clone, Copy)]
+    enum InterjectionProjection {
+        Echo,
+        Injected,
+        ReplayChunk,
+    }
+
+    fn deliver_identity_projection(
+        app: &mut AppView,
+        sid: &str,
+        id: &str,
+        text: &str,
+        projection: InterjectionProjection,
+        replay: bool,
+    ) {
+        deliver_identity_projection_with_meta(app, sid, id, text, projection, serde_json::json!({"isReplay": replay}));
+    }
+
+    fn deliver_identity_projection_with_meta(
+        app: &mut AppView,
+        sid: &str,
+        id: &str,
+        text: &str,
+        projection: InterjectionProjection,
+        mut envelope: serde_json::Value,
+    ) {
+        let identity = serde_json::json!({"id": id, "display_text": text});
+        match projection {
+            InterjectionProjection::Echo => {
+                handle_ext_notification(&acp_fixtures::ext_notification("x.ai/session/interjection", &serde_json::json!({
+                    "sessionId": sid, "text": text, "interjectionId": id, "meta": envelope,
+                })), app);
+            }
+            InterjectionProjection::Injected => {
+                let (response_tx, _rx) = tokio::sync::oneshot::channel();
+                let notification = SessionNotification {
+                    session_id: acp::SessionId::new(sid),
+                    update: XaiSessionUpdate::InjectedContextRecord {
+                        kind: "interjection".into(),
+                        text: format!("The user sent a message while you were working:\n<user_query>\n{text}\n</user_query>"),
+                    },
+                    meta: Some({
+                        envelope["interjectionIdentity"] = identity;
+                        envelope
+                    }),
+                };
+                handle(AcpClientMessage::ExtNotification(xai_acp_lib::AcpArgs {
+                    request: acp_fixtures::ext_notification("x.ai/session_notification", &notification),
+                    response_tx,
+                }), app);
+            }
+            InterjectionProjection::ReplayChunk => {
+                let (response_tx, _rx) = tokio::sync::oneshot::channel();
+                let meta = serde_json::json!({"interjection": true, "interjectionIdentity": identity});
+                handle(AcpClientMessage::SessionNotification(xai_acp_lib::AcpArgs {
+                    request: acp::SessionNotification::new(acp::SessionId::new(sid),
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                            acp::ContentBlock::Text(acp::TextContent::new("framed model text"))
+                        ).meta(meta.as_object().cloned())))
+                        .meta(envelope.as_object().cloned()),
+                    response_tx,
+                }), app);
+            }
+        }
+    }
+
+    fn interjection_rows(app: &AppView) -> Vec<(EntryId, String)> {
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        (0..agent.scrollback.len()).filter_map(|index| {
+            let entry = agent.scrollback.get(index)?;
+            match &entry.block {
+                RenderBlock::UserPrompt(block) if block.is_interjection => Some((entry.id, block.text.clone())),
+                RenderBlock::Injected(block) => panic!("identified interjection produced an extra injected row: {block:?}"),
+                _ => None,
+            }
+        }).collect()
+    }
+
+    #[test]
+    fn submitted_interjection_keeps_entry_through_all_projection_orders_and_retries() {
+        use crate::app::actions::{Action, Effect};
+        use crate::app::dispatch::router::dispatch;
+        use InterjectionProjection::{Echo, Injected, ReplayChunk};
+        for order in [
+            [Echo, Injected, ReplayChunk], [Echo, ReplayChunk, Injected],
+            [Injected, Echo, ReplayChunk], [Injected, ReplayChunk, Echo],
+            [ReplayChunk, Echo, Injected], [ReplayChunk, Injected, Echo],
+        ] {
+            let mut app = make_app_with_agent("identity-session");
+            let text = "once [Image #1]";
+            let mut image = crate::prompt_images::from_clipboard_data(&crate::clipboard::ImageData {
+                data: vec![1, 2, 3], mime_type: "image/png".into(),
+            });
+            image.display_number = 1;
+            let effects = dispatch(Action::Interject { text: text.into(), images: vec![image] }, &mut app);
+            let [Effect::SendInterject { interjection_id, blocks: Some(blocks), .. }] = effects.as_slice() else {
+                panic!("real input must dispatch an image-bearing interjection");
+            };
+            assert!(blocks.iter().any(|block| matches!(block, acp::ContentBlock::Image(_))));
+            let before = interjection_rows(&app);
+            assert_eq!(before.len(), 1);
+            for projection in order.into_iter().chain(order) {
+                deliver_identity_projection(&mut app, "identity-session", interjection_id, text, projection, false);
+                assert_eq!(interjection_rows(&app), before, "the original EntryId and content must survive");
+            }
+            deliver_identity_projection(&mut app, "other-session", interjection_id, "foreign", Echo, false);
+            assert_eq!(interjection_rows(&app), before);
+        }
+    }
+
+    #[test]
+    fn second_client_and_restarted_client_join_equal_text_by_id_not_text() {
+        use InterjectionProjection::{Echo, Injected, ReplayChunk};
+        for replay in [false, true] {
+            for order in [
+                [Echo, Injected, ReplayChunk], [Echo, ReplayChunk, Injected],
+                [Injected, Echo, ReplayChunk], [Injected, ReplayChunk, Echo],
+                [ReplayChunk, Echo, Injected], [ReplayChunk, Injected, Echo],
+            ] {
+                let mut app = make_app_with_agent("identity-session");
+                let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+                agent.attached_as_viewer = true;
+                agent.session.loading_replay = replay;
+                for (index, id) in ["first", "second"].into_iter().enumerate() {
+                    for projection in order {
+                        deliver_identity_projection(&mut app, "identity-session", id, "intentionally equal", projection, replay);
+                        assert_eq!(interjection_rows(&app).len(), index + 1);
+                    }
+                    for projection in order {
+                        deliver_identity_projection(&mut app, "identity-session", id, "intentionally equal", projection, replay);
+                    }
+                }
+                let rows = interjection_rows(&app);
+                assert_eq!(rows.len(), 2);
+                assert_ne!(rows[0].0, rows[1].0);
+                assert_eq!(rows[0].1, "intentionally equal");
+                assert_eq!(rows[1].1, "intentionally equal");
+            }
+        }
+    }
+
+    #[test]
+    fn accepted_source_survives_rpc_failure_before_or_after_echo() {
+        use crate::app::actions::{Action, Effect, TaskResult};
+        use crate::app::dispatch::dispatch;
+        for echo_first in [false, true] {
+            let mut app = make_app_with_agent("identity-session");
+            let text = "accepted despite lost response";
+            let effects = dispatch(Action::Interject { text: text.into(), images: vec![] }, &mut app);
+            let [Effect::SendInterject { interjection_id, binding, .. }] = effects.as_slice() else {
+                panic!("expected interjection ingress");
+            };
+            let original = interjection_rows(&app);
+            if echo_first {
+                deliver_identity_projection(&mut app, "identity-session", interjection_id, text, InterjectionProjection::Echo, false);
+            }
+            deliver_identity_projection(&mut app, "identity-session", interjection_id, text, InterjectionProjection::Injected, false);
+            dispatch(Action::TaskComplete(TaskResult::InterjectFailed {
+                agent_id: AgentId(0), binding: binding.clone(), error: "response lost".into(),
+                remaining: vec![(text.into(), interjection_id.clone(), None)],
+            }), &mut app);
+            assert_eq!(interjection_rows(&app), original);
+            assert!(app.agents.get(&AgentId(0)).unwrap().session.pending_prompts.is_empty());
+            deliver_identity_projection(&mut app, "identity-session", interjection_id, text, InterjectionProjection::Echo, false);
+            assert_eq!(interjection_rows(&app), original);
+        }
+    }
+
+    #[test]
+    fn rejected_ingress_removes_optimistic_entry_and_preserves_retry() {
+        use crate::app::actions::{Action, Effect, TaskResult};
+        use crate::app::dispatch::dispatch;
+        let mut app = make_app_with_agent("identity-session");
+        let effects = dispatch(Action::Interject { text: "rejected".into(), images: vec![] }, &mut app);
+        let [Effect::SendInterject { interjection_id, binding, .. }] = effects.as_slice() else {
+            panic!("expected interjection ingress");
+        };
+        dispatch(Action::TaskComplete(TaskResult::InterjectFailed {
+            agent_id: AgentId(0), binding: binding.clone(), error: "ingress rejected".into(),
+            remaining: vec![("rejected".into(), interjection_id.clone(), None)],
+        }), &mut app);
+        assert!(interjection_rows(&app).is_empty());
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert_eq!(agent.session.pending_prompts.len(), 1);
+        assert_eq!(agent.session.pending_prompts.front().unwrap().text, "rejected");
+    }
+
+    #[test]
+    fn stale_or_unversioned_echo_cannot_claim_bound_interjection() {
+        use crate::app::actions::{Action, Effect};
+        use crate::app::dispatch::dispatch;
+        use crate::app::agent_view::current_actions::CurrentActionsContext;
+        let mut app = make_app_with_agent("identity-session");
+        let view = app.agents.get_mut(&AgentId(0)).unwrap();
+        let current = CurrentActionsContext {
+            binding: view.current_actions_binding().unwrap(),
+            incarnation: uuid::Uuid::new_v4(),
+        };
+        assert!(view.bind_current_actions(current.clone()));
+        let effects = dispatch(Action::Interject { text: "new binding".into(), images: vec![] }, &mut app);
+        let [Effect::SendInterject { interjection_id, .. }] = effects.as_slice() else {
+            panic!("expected interjection ingress");
+        };
+        let original = interjection_rows(&app);
+        for meta in [serde_json::json!({}), serde_json::json!({
+            "currentActionsVersion": {"incarnation": uuid::Uuid::new_v4(), "sequence": 1}
+        })] {
+            let echo = acp_fixtures::ext_notification("x.ai/session/interjection", &serde_json::json!({
+                "sessionId": "identity-session", "text": "old binding", "interjectionId": interjection_id,
+                "meta": meta,
+            }));
+            assert!(!handle_ext_notification(&echo, &mut app));
+            assert_eq!(interjection_rows(&app), original);
+            assert!(app.agents.get(&AgentId(0)).unwrap().self_interjection_ids.contains(interjection_id));
+        }
+    }
+
+    #[test]
+    fn identityless_legacy_interjections_are_not_guessed_from_equal_text() {
+        let mut app = make_app_with_agent("legacy-session");
+        for _ in 0..2 {
+            handle_ext_notification(&interjection_broadcast("legacy-session", "equal legacy text"), &mut app);
+        }
+        assert_eq!(interjection_rows(&app).len(), 2);
+    }
+
+    #[test]
+    fn rpc_error_and_original_source_retire_only_the_matching_retry_in_both_orders() {
+        use crate::app::actions::{Action, Effect, TaskResult};
+        use crate::app::dispatch::dispatch;
+        for projection in [InterjectionProjection::Injected, InterjectionProjection::ReplayChunk] {
+            for source_first in [false, true] {
+                let mut app = make_app_with_agent("identity-session");
+                let text = "same text";
+                let first = dispatch(Action::Interject { text: text.into(), images: vec![] }, &mut app);
+                let second = dispatch(Action::Interject { text: text.into(), images: vec![] }, &mut app);
+                let [Effect::SendInterject { interjection_id: first_id, binding, .. }] = first.as_slice() else { panic!("first dispatch"); };
+                let [Effect::SendInterject { interjection_id: second_id, .. }] = second.as_slice() else { panic!("second dispatch"); };
+                assert_ne!(first_id, second_id);
+                app.agents.get_mut(&AgentId(0)).unwrap().session.enqueue_prompt("unrelated tail".into());
+                let failure = |id: &String| TaskResult::InterjectFailed {
+                    agent_id: AgentId(0), binding: binding.clone(), error: "lost response".into(),
+                    remaining: vec![(text.into(), id.clone(), None)],
+                };
+                dispatch(Action::TaskComplete(failure(second_id)), &mut app);
+                let unrelated_retry = app.agents.get(&AgentId(0)).unwrap().session.pending_prompts.front().unwrap().id;
+                if source_first {
+                    deliver_identity_projection(&mut app, "identity-session", first_id, text, projection, false);
+                }
+                dispatch(Action::TaskComplete(failure(first_id)), &mut app);
+                dispatch(Action::TaskComplete(failure(first_id)), &mut app);
+                if !source_first {
+                    let pending = &app.agents.get(&AgentId(0)).unwrap().session.pending_prompts;
+                    assert_eq!(pending.len(), 3);
+                    assert_eq!(pending.front().unwrap().interjection.as_ref().unwrap().id, *first_id);
+                    deliver_identity_projection(&mut app, "identity-session", first_id, text, projection, false);
+                }
+                let accepted = interjection_rows(&app);
+                assert_eq!(accepted.len(), 1);
+                assert_eq!(accepted[0].1, text);
+                for repeated in [projection, InterjectionProjection::Echo, projection] {
+                    deliver_identity_projection(&mut app, "identity-session", first_id, text, repeated, false);
+                }
+                dispatch(Action::TaskComplete(failure(first_id)), &mut app);
+                assert_eq!(interjection_rows(&app), accepted);
+                let pending = &app.agents.get(&AgentId(0)).unwrap().session.pending_prompts;
+                assert_eq!(pending.len(), 2);
+                assert_eq!(pending[0].id, unrelated_retry);
+                assert_eq!(pending[0].interjection.as_ref().unwrap().id, *second_id);
+                assert_eq!(pending[1].text, "unrelated tail");
+            }
+        }
+    }
+
+    #[test]
+    fn image_retry_queue_promotion_keeps_original_wire_identity() {
+        use crate::app::actions::{Action, Effect, TaskResult};
+        use crate::app::dispatch::dispatch;
+        let mut app = make_app_with_agent("identity-session");
+        let image = crate::prompt_images::from_clipboard_data(&crate::clipboard::ImageData {
+            data: vec![1, 2, 3], mime_type: "image/png".into(),
+        });
+        let text = "original image input";
+        let effects = dispatch(Action::Interject { text: text.into(), images: vec![image] }, &mut app);
+        let [Effect::SendInterject { interjection_id, binding, blocks: Some(original), .. }] = effects.as_slice() else { panic!("image dispatch"); };
+        deliver_identity_projection(&mut app, "identity-session", interjection_id, text, InterjectionProjection::Echo, false);
+        dispatch(Action::TaskComplete(TaskResult::InterjectFailed {
+            agent_id: AgentId(0), binding: binding.clone(), error: "lost ACK".into(),
+            remaining: vec![(text.into(), interjection_id.clone(), Some(original.clone()))],
+        }), &mut app);
+        let queued = app.agents.get(&AgentId(0)).unwrap().session.pending_prompts.front().unwrap();
+        assert_eq!(queued.interjection.as_ref().unwrap().id, *interjection_id);
+        assert_eq!(queued.interjection.as_ref().unwrap().display_text, text);
+        assert_eq!(queued.images.len(), 1);
+        let promoted = dispatch(Action::DrainQueue, &mut app);
+        let [Effect::SendInterject { interjection_id: retry_id, blocks: Some(blocks), .. }] = promoted.as_slice() else { panic!("retry must reuse interject ingress, including idle fallback"); };
+        assert_eq!(retry_id, interjection_id);
+        assert!(blocks.iter().any(|block| matches!(block, acp::ContentBlock::Image(_))));
+        let before = interjection_rows(&app);
+        assert_eq!(before.len(), 1);
+        deliver_identity_projection(&mut app, "identity-session", interjection_id, text, InterjectionProjection::ReplayChunk, false);
+        assert_eq!(interjection_rows(&app), before);
+        assert!(app.agents.get(&AgentId(0)).unwrap().session.pending_prompts.is_empty());
+    }
+
+    #[test]
+    fn reload_binding_rejects_late_old_effect_echo_ack_and_sources_in_same_incarnation() {
+        use crate::app::actions::{Action, Effect, TaskResult};
+        use crate::app::dispatch::dispatch;
+        use crate::app::agent_view::current_actions::CurrentActionsContext;
+        use xai_grok_shell::extensions::current_actions::{DeliveryRole, PublicationContext, DELIVERY_META_KEY};
+        let mut app = make_app_with_agent("identity-session");
+        let view = app.agents.get_mut(&AgentId(0)).unwrap();
+        let incarnation = uuid::Uuid::new_v4();
+        let original_binding = view.current_actions_binding().unwrap();
+        assert!(view.bind_current_actions(CurrentActionsContext { binding: original_binding.clone(), incarnation }));
+        let effects = dispatch(Action::Interject { text: "original".into(), images: vec![] }, &mut app);
+        let [Effect::SendInterject { interjection_id, binding, .. }] = effects.as_slice() else { panic!("original dispatch"); };
+        let failure = || TaskResult::InterjectFailed {
+            agent_id: AgentId(0), binding: binding.clone(), error: "late old failure".into(),
+            remaining: vec![("original".into(), interjection_id.clone(), None)],
+        };
+        dispatch(Action::TaskComplete(failure()), &mut app);
+        app.agents.get_mut(&AgentId(0)).unwrap().begin_replay_window();
+        let loaded = dispatch(Action::TaskComplete(TaskResult::SessionLoaded {
+            agent_id: AgentId(0), session_id: acp::SessionId::new("identity-session"),
+            models: None, modes: None, code_restored: false, restore_summary: None,
+            restore_degree: None, running_prompt_id: None,
+        }), &mut app);
+        let view = app.agents.get(&AgentId(0)).unwrap();
+        let new_binding = view.current_actions_binding().unwrap();
+        assert_ne!(new_binding, original_binding);
+        assert_eq!(view.current_actions_context().unwrap().incarnation, incarnation);
+        assert!(loaded.iter().any(|effect| matches!(effect,
+            Effect::SendInterject { interjection_id: id, binding, .. }
+                if id == interjection_id && binding == &new_binding)));
+        let current_rows = interjection_rows(&app);
+        assert_eq!(current_rows.len(), 1);
+        let make_meta = |binding| {
+            let mut meta = serde_json::json!({"currentActionsVersion": {"incarnation": incarnation, "sequence": 1}});
+            meta[DELIVERY_META_KEY] = serde_json::to_value(DeliveryRole::Live {
+                context: PublicationContext { binding, incarnation },
+            }).unwrap();
+            meta
+        };
+        dispatch(Action::TaskComplete(failure()), &mut app);
+        dispatch(Action::TaskComplete(TaskResult::InterjectQueued {
+            agent_id: AgentId(0), binding: original_binding.clone(),
+        }), &mut app);
+        for projection in [InterjectionProjection::Echo, InterjectionProjection::Injected, InterjectionProjection::ReplayChunk] {
+            deliver_identity_projection_with_meta(&mut app, "identity-session", interjection_id, "late old source", projection, make_meta(original_binding.clone()));
+            assert_eq!(interjection_rows(&app), current_rows);
+            let view = app.agents.get(&AgentId(0)).unwrap();
+            assert!(view.self_interjection_ids.contains(interjection_id));
+            assert!(view.session.pending_prompts.is_empty());
+        }
+        let mut unbound = make_meta(new_binding.clone());
+        unbound[DELIVERY_META_KEY] = serde_json::to_value(DeliveryRole::LiveUnbound {
+            session_id: "identity-session".into(), incarnation,
+        }).unwrap();
+        deliver_identity_projection_with_meta(&mut app, "identity-session", interjection_id, "unknown authority", InterjectionProjection::Echo, unbound);
+        assert!(app.agents.get(&AgentId(0)).unwrap().self_interjection_ids.contains(interjection_id));
+        deliver_identity_projection_with_meta(&mut app, "identity-session", interjection_id, "original", InterjectionProjection::Injected, make_meta(new_binding.clone()));
+        deliver_identity_projection_with_meta(&mut app, "identity-session", interjection_id, "original", InterjectionProjection::Echo, make_meta(new_binding));
+        assert_eq!(interjection_rows(&app), current_rows);
+        assert!(!app.agents.get(&AgentId(0)).unwrap().self_interjection_ids.contains(interjection_id));
+    }
+
+    #[test]
+    fn bound_new_client_without_optimistic_row_joins_by_id_with_publication_proof() {
+        use crate::app::agent_view::current_actions::CurrentActionsContext;
+        use xai_grok_shell::extensions::current_actions::{DeliveryRole, PublicationContext, DELIVERY_META_KEY};
+        for order in [
+            [InterjectionProjection::Echo, InterjectionProjection::Injected, InterjectionProjection::ReplayChunk],
+            [InterjectionProjection::Injected, InterjectionProjection::ReplayChunk, InterjectionProjection::Echo],
+            [InterjectionProjection::ReplayChunk, InterjectionProjection::Echo, InterjectionProjection::Injected],
+        ] {
+            let mut app = make_app_with_agent("identity-session");
+            let view = app.agents.get_mut(&AgentId(0)).unwrap();
+            view.attached_as_viewer = true;
+            let context = CurrentActionsContext {
+                binding: view.current_actions_binding().unwrap(), incarnation: uuid::Uuid::new_v4(),
+            };
+            assert!(view.bind_current_actions(context.clone()));
+            let mut meta = serde_json::json!({"currentActionsVersion": {"incarnation": context.incarnation, "sequence": 1}});
+            meta[DELIVERY_META_KEY] = serde_json::to_value(DeliveryRole::Live {
+                context: PublicationContext { binding: context.binding, incarnation: context.incarnation },
+            }).unwrap();
+            assert!(interjection_rows(&app).is_empty());
+            for (index, id) in ["first-id", "second-id"].into_iter().enumerate() {
+                for projection in order.into_iter().chain(order) {
+                    deliver_identity_projection_with_meta(&mut app, "identity-session", id, "same text", projection, meta.clone());
+                    assert_eq!(interjection_rows(&app).len(), index + 1);
+                }
+            }
+            let rows = interjection_rows(&app);
+            assert_ne!(rows[0].0, rows[1].0);
+            assert_eq!(rows[0].1, rows[1].1);
+        }
+    }

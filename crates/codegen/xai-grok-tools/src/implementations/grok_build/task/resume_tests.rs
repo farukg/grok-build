@@ -17,6 +17,30 @@ use crate::types::output::ToolOutput;
 use crate::types::resources::Resources;
 use crate::types::tool_metadata::test_ctx;
 
+#[test]
+fn exact_alias_collision_is_ambiguous_independent_of_input_order() {
+    let keys = [("shared-alias", "child-b"), ("shared-alias", "child-a"), ("child-a", "child-a")];
+    let expected = SubagentReferenceMatch::Ambiguous(vec!["child-a".to_owned(), "child-b".to_owned()]);
+    assert_eq!(match_subagent_reference("shared-alias", keys), expected);
+    assert_eq!(match_subagent_reference("shared-alias", keys.into_iter().rev()), expected);
+}
+
+#[test]
+fn exact_alias_deduplicates_one_child_before_prefix_selection() {
+    assert_eq!(
+        match_subagent_reference("12345678", [
+            ("12345678", "child-a"),
+            ("12345678", "child-a"),
+            ("12345678-more", "child-b"),
+        ]),
+        SubagentReferenceMatch::Unique("child-a".to_owned()),
+    );
+    assert_eq!(
+        match_subagent_reference("1234567", [("12345678", "child-a")]),
+        SubagentReferenceMatch::NoMatch,
+    );
+}
+
 const TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const PARENT: &str = "parent";
 const HOLD: &str = "hold";

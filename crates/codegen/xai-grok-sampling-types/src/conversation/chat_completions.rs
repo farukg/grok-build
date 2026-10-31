@@ -1,4 +1,5 @@
 use super::*;
+use crate::instruction_projection::{InstructionContentEncoding, InstructionContentPath, ProviderInstructionPath, ProviderInstructionPlan};
 
 impl From<ChatRequestMessage> for ConversationItem {
     fn from(msg: ChatRequestMessage) -> Self {
@@ -24,6 +25,7 @@ impl From<ChatRequestMessage> for ConversationItem {
                     })
                     .collect();
                 ConversationItem::User(UserItem {
+                    interjection: None,
                     evidence: Default::default(),
                     source: Default::default(),
                     content: parts,
@@ -78,15 +80,24 @@ impl From<ChatRequestMessage> for ConversationItem {
 /// The wire format carries `reasoning_content` on the *following* assistant message, which a single item cannot see.
 /// Use [`conversation_to_chat_messages`] instead when reasoning must survive.
 pub fn conversation_item_to_chat_message(item: ConversationItem) -> ChatRequestMessage {
+    chat_message_with_instructions(item, None, 0)
+}
+
+fn chat_message_with_instructions(item: ConversationItem, mut plan: Option<&mut ProviderInstructionPlan>, index: usize) -> ChatRequestMessage {
+    let path = ProviderInstructionPath::ChatMessage { index, content: InstructionContentPath::Whole };
     match item {
-        ConversationItem::System(s) => ChatRequestMessage::system(s.content.as_ref()),
-        ConversationItem::User(u) => {
+        ConversationItem::System(ref s) => {
+            if let Some(plan) = plan.as_mut() { plan.record_item(&item, path, InstructionContentEncoding::SingleText); }
+            ChatRequestMessage::system(s.content.as_ref())
+        }
+        ConversationItem::User(ref u) => {
             let has_images = u
                 .content
                 .iter()
                 .any(|p| matches!(p, ContentPart::Image { .. }));
             // Collapse to a single text block when there are no images, matching the behavior from before content blocks existed
             let content = if !has_images {
+                if let Some(plan) = plan.as_mut() { plan.record_item(&item, path, InstructionContentEncoding::JoinedText); }
                 let text = u
                     .content
                     .iter()
@@ -98,9 +109,10 @@ pub fn conversation_item_to_chat_message(item: ConversationItem) -> ChatRequestM
                     .join("\n");
                 MessageContent::Text(text)
             } else {
+                if let Some(plan) = plan.as_mut() { plan.record_item(&item, path, InstructionContentEncoding::Blocks); }
                 let blocks: Vec<ChatContentBlock> = u
                     .content
-                    .into_iter()
+                    .iter()
                     .map(|part| match part {
                         ContentPart::Text { text } => ChatContentBlock::Text {
                             text: text.as_ref().to_owned(),
@@ -194,6 +206,11 @@ pub fn conversation_item_to_chat_message(item: ConversationItem) -> ChatRequestM
 /// The canonical conversion: each run of `Reasoning` siblings folds into the `reasoning_content` of the following `Assistant`.
 /// A `BackendToolCall` in between does not break the fold, any other item clears it, and reasoning with no following assistant is dropped.
 pub fn conversation_to_chat_messages(items: Vec<ConversationItem>) -> Vec<ChatRequestMessage> {
+    chat_messages_with_instructions(items).0
+}
+
+fn chat_messages_with_instructions(items: Vec<ConversationItem>) -> (Vec<ChatRequestMessage>, ProviderInstructionPlan) {
+    let mut plan = ProviderInstructionPlan::new(crate::ApiBackend::ChatCompletions);
     let mut out: Vec<ChatRequestMessage> = Vec::with_capacity(items.len());
     let mut pending_reasoning: Vec<String> = Vec::new();
 
@@ -206,7 +223,7 @@ pub fn conversation_to_chat_messages(items: Vec<ConversationItem>) -> Vec<ChatRe
                 }
             }
             ConversationItem::Assistant(_) => {
-                let mut msg = conversation_item_to_chat_message(item);
+                let mut msg = chat_message_with_instructions(item, Some(&mut plan), out.len());
                 if !pending_reasoning.is_empty() {
                     msg.reasoning_content = Some(pending_reasoning.join("\n"));
                     pending_reasoning.clear();
@@ -215,16 +232,16 @@ pub fn conversation_to_chat_messages(items: Vec<ConversationItem>) -> Vec<ChatRe
             }
             ConversationItem::BackendToolCall(_) => {
                 // Keep `pending_reasoning` so it still folds onto the following assistant, as the Responses path does
-                out.push(conversation_item_to_chat_message(item));
+                out.push(chat_message_with_instructions(item, Some(&mut plan), out.len()));
             }
             other => {
                 pending_reasoning.clear();
-                out.push(conversation_item_to_chat_message(other));
+                out.push(chat_message_with_instructions(other, Some(&mut plan), out.len()));
             }
         }
     }
 
-    out
+    (out, plan)
 }
 
 impl From<ChatResponseMessage> for ConversationItem {
@@ -257,66 +274,71 @@ impl From<ChatResponseMessage> for ConversationItem {
 
 impl From<ConversationRequest> for ChatCompletionRequest {
     fn from(req: ConversationRequest) -> Self {
-        let messages: Vec<ChatRequestMessage> = conversation_to_chat_messages(req.items);
-
-        let tools_is_empty = req.tools.is_empty();
-        let tools: Option<Vec<ToolDefinition>> = if tools_is_empty {
-            None
-        } else {
-            Some(
-                req.tools
-                    .into_iter()
-                    .map(|t| ToolDefinition::function(t.name, t.description, t.parameters))
-                    .collect(),
-            )
-        };
-
-        // only set `tool_choice` when there are `tools` to avoid OpenAI client errors
-        let tool_choice = req
-            .tool_choice
-            .filter(|_| !tools_is_empty)
-            .map(|tc| match tc {
-                ConversationToolChoice::Auto => ToolChoice::auto(),
-                ConversationToolChoice::None => ToolChoice::none(),
-                ConversationToolChoice::Required => ToolChoice::required(),
-                ConversationToolChoice::Function(name) => ToolChoice::function(name),
-            });
-
-        let response_format = req
-            .json_schema
-            .map(|schema| rs::ResponseFormat::JsonSchema {
-                json_schema: rs::ResponseFormatJsonSchema {
-                    description: None,
-                    name: STRUCTURED_OUTPUT_SCHEMA_NAME.to_string(),
-                    schema: Some(schema),
-                    strict: Some(true),
-                },
-            });
-
-        ChatCompletionRequest {
-            model: req.model,
-            messages,
-            temperature: req.temperature,
-            max_tokens: req.max_output_tokens,
-            top_p: req.top_p,
-            frequency_penalty: None,
-            presence_penalty: None,
-            user: None,
-            tools,
-            tool_choice,
-            search_parameters: None,
-            response_format,
-            reasoning_effort: req.reasoning_effort,
-            x_grok_conv_id: req.x_grok_conv_id,
-            x_grok_req_id: req.x_grok_req_id,
-            x_grok_session_id: req.x_grok_session_id,
-            x_grok_turn_idx: req.x_grok_turn_idx,
-            x_grok_transient_retry: req.x_grok_transient_retry,
-            x_grok_agent_id: req.x_grok_agent_id,
-            x_grok_deployment_id: req.x_grok_deployment_id,
-            x_grok_user_id: req.x_grok_user_id,
-            trace: None,
-            traceparent: req.traceparent,
-        }
+        chat_request_with_instructions(req).0
     }
+}
+
+pub fn chat_request_with_instructions(req: ConversationRequest) -> (ChatCompletionRequest, ProviderInstructionPlan) {
+    let (messages, plan) = chat_messages_with_instructions(req.items);
+
+    let tools_is_empty = req.tools.is_empty();
+    let tools: Option<Vec<ToolDefinition>> = if tools_is_empty {
+        None
+    } else {
+        Some(
+            req.tools
+                .into_iter()
+                .map(|t| ToolDefinition::function(t.name, t.description, t.parameters))
+                .collect(),
+        )
+    };
+
+    // only set `tool_choice` when there are `tools` to avoid OpenAI client errors
+    let tool_choice = req
+        .tool_choice
+        .filter(|_| !tools_is_empty)
+        .map(|tc| match tc {
+            ConversationToolChoice::Auto => ToolChoice::auto(),
+            ConversationToolChoice::None => ToolChoice::none(),
+            ConversationToolChoice::Required => ToolChoice::required(),
+            ConversationToolChoice::Function(name) => ToolChoice::function(name),
+        });
+
+    let response_format = req
+        .json_schema
+        .map(|schema| rs::ResponseFormat::JsonSchema {
+            json_schema: rs::ResponseFormatJsonSchema {
+                description: None,
+                name: STRUCTURED_OUTPUT_SCHEMA_NAME.to_string(),
+                schema: Some(schema),
+                strict: Some(true),
+            },
+        });
+
+    let request = ChatCompletionRequest {
+        model: req.model,
+        messages,
+        temperature: req.temperature,
+        max_tokens: req.max_output_tokens,
+        top_p: req.top_p,
+        frequency_penalty: None,
+        presence_penalty: None,
+        user: None,
+        tools,
+        tool_choice,
+        search_parameters: None,
+        response_format,
+        reasoning_effort: req.reasoning_effort,
+        x_grok_conv_id: req.x_grok_conv_id,
+        x_grok_req_id: req.x_grok_req_id,
+        x_grok_session_id: req.x_grok_session_id,
+        x_grok_turn_idx: req.x_grok_turn_idx,
+        x_grok_transient_retry: req.x_grok_transient_retry,
+        x_grok_agent_id: req.x_grok_agent_id,
+        x_grok_deployment_id: req.x_grok_deployment_id,
+        x_grok_user_id: req.x_grok_user_id,
+        trace: None,
+        traceparent: req.traceparent,
+    };
+    (request, plan)
 }

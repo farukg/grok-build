@@ -1107,3 +1107,54 @@ async fn closed_publication_mailbox_is_not_submission_and_reopened_resource_retr
         })
         .await;
 }
+
+#[tokio::test]
+async fn drained_interjection_publishes_original_identity_with_actual_source() {
+    tokio::task::LocalSet::new().run_until(async {
+        let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+        let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+        let original = "a".repeat(1_633);
+        actor.pending_interjections.push(PendingInterjection {
+            id: Some("original-wire-id".into()),
+            text: original.clone(),
+            attachments: vec![],
+        });
+        assert!(actor.drain_pending_interjections().await);
+        while persistence_rx.try_recv().is_ok() {}
+        let history = actor.chat_state_handle.get_conversation().await;
+        assert_eq!(history.iter().filter(|item| matches!(item,
+            ConversationItem::User(user) if user.interjection.as_ref().is_some_and(|identity| identity.id == "original-wire-id")
+        )).count(), 1);
+        let source = history.last().unwrap().source();
+        let built = actor.chat_state_handle.build_request(
+            vec![], None, true, None, "conv".into(), "request".into(),
+        ).await.unwrap();
+        let records: Vec<_> = built.injected_records.iter().filter(|record| record.kind_wire() == "interjection").collect();
+        assert_eq!(records.len(), 1);
+        let publish = actor.send_injected_request_records(&records);
+        let persist = async {
+            let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = persistence_rx.recv().await.unwrap() else {
+                panic!("expected acknowledged injected-record batch");
+            };
+            assert!(gateway_rx.try_recv().is_err());
+            assert_eq!(updates.len(), 1);
+            let SessionUpdate::Xai(notification) = &updates[0] else { panic!("expected injected record"); };
+            let meta = notification.meta.as_ref().unwrap();
+            assert_eq!(meta["interjectionIdentity"]["id"], "original-wire-id");
+            assert_eq!(meta["interjectionIdentity"]["display_text"], original);
+            let publication: crate::session::request_capture::SourcePublication = serde_json::from_value(
+                meta[crate::session::request_capture::SOURCE_PUBLICATION_META].clone(),
+            ).unwrap();
+            assert_eq!(publication.source, source);
+            respond_to.send(Ok(())).unwrap();
+        };
+        let (result, ()) = tokio::join!(publish, persist);
+        result.unwrap();
+        let xai_acp_lib::AcpClientMessage::ExtNotification(args) = gateway_rx.try_recv().unwrap() else {
+            panic!("expected live injected record after acknowledgement");
+        };
+        let notification: XaiSessionNotification = serde_json::from_str(args.request.params.get()).unwrap();
+        assert_eq!(notification.meta.unwrap()["interjectionIdentity"]["id"], "original-wire-id");
+    }).await;
+}

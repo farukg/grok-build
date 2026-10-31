@@ -67,6 +67,7 @@ impl JsonlStorageAdapter {
         Self::append_jsonl_line_unlocked_with(&path, line, AppendDurability::Durable, Self::sync_file_durable, || Self::sync_parent_directory(&path))
             .map_err(|error| match error {
                 AppendLineError::NotCommitted(source) => StrictAppendError::NotCommitted(source),
+                AppendLineError::Indeterminate(source) => StrictAppendError::Indeterminate(source),
                 AppendLineError::Committed(source) => StrictAppendError::Committed { acknowledgement: CompletionProjectionAck::Appended, source },
             })?;
         let mut committed = receipts;
