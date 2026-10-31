@@ -117,6 +117,18 @@ This is user-authorized planning, not implementation authorization for the full 
 and the [active continuation](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-f7-request-display.plan.md#planned-instructions-and-cache-follow-up);
 the current feature pause and actual-request viewer exclusions are unchanged.
 
+## Cargo CI tool-family integration (source only)
+
+The Grok inner CI image requires a successful `publish-cargo-release` job from
+Sigma-Crates project 28. It fetches `ci-artifacts/cargo-localbuild/family-archive.tar`
+and `family-complete.toml`, verifies producer and pipeline provenance, archive and
+seal digests, fork identity and the complete sealed inventory, including seven
+family executables, resolution files, source and sidecar archives, and checksums.
+The job token is placed in a temporary mode-600 file and mounted as a Buildah
+secret. Qualification remains blocked: pipeline 11094, job 86689 failed; no
+qualified archive or resulting inner-image digest is available. GitLab acceptance
+of this source remains unverified.
+
 ## Current source disposition and open gates
 
 - R: local terminal execution identity, shutdown enrollment/kill settlement and

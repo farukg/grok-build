@@ -14,20 +14,26 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-ini
     && ln -s rustup /usr/local/bin/rustc \
     && rm /tmp/rustup-init.sh
 
-ARG CARGO_LOCALBUILD_FAMILY_URL
-ARG CARGO_LOCALBUILD_FAMILY_SHA256
-RUN test -n "$CARGO_LOCALBUILD_FAMILY_URL" \
-    && test -n "$CARGO_LOCALBUILD_FAMILY_SHA256" \
-    && curl --fail --location --proto '=https' --tlsv1.2 \
-        "$CARGO_LOCALBUILD_FAMILY_URL" -o /tmp/cargo-localbuild-family.tar.zst \
-    && echo "$CARGO_LOCALBUILD_FAMILY_SHA256  /tmp/cargo-localbuild-family.tar.zst" \
-        | sha256sum --check --status \
+ARG CARGO_LOCALBUILD_FAMILY_BASE_URL
+ARG CARGO_LOCALBUILD_FAMILY_PROJECT_ID
+ARG CARGO_LOCALBUILD_FAMILY_PIPELINE_ID
+ARG CARGO_LOCALBUILD_FAMILY_JOB_ID
+ARG CARGO_LOCALBUILD_FAMILY_COMMIT
+ARG CARGO_LOCALBUILD_FAMILY_ARCHIVE_SHA256
+ARG CARGO_LOCALBUILD_FAMILY_CARGO_FORK_SHA256
+ARG CARGO_LOCALBUILD_FAMILY_SEAL_FILE_SHA256
+ARG CARGO_LOCALBUILD_FAMILY_JOB_URL
+ARG CARGO_LOCALBUILD_FAMILY_PIPELINE_URL
+COPY family-verify.py /usr/local/lib/grok-family-verify.py
+RUN --mount=type=secret,id=gitlab_job_token,target=/run/secrets/gitlab_job_token \
+    python3 /usr/local/lib/grok-family-verify.py \
     && mkdir -p /opt/sigma/cargo-localbuild \
-    && tar --zstd -xf /tmp/cargo-localbuild-family.tar.zst \
-        -C /opt/sigma/cargo-localbuild \
-    && test -x /opt/sigma/cargo-localbuild/bin/cargo-release \
-    && ln -s /opt/sigma/cargo-localbuild/bin/cargo-release /usr/local/bin/cargo-release \
-    && rm /tmp/cargo-localbuild-family.tar.zst
+    && tar -xf /tmp/family-archive.tar -C /opt/sigma/cargo-localbuild \
+    && for tool in cargo-localbuild cargo-quick cargo-perf cargo-size cargo-release cargo-remote-bld sig; do \
+        test -x "/opt/sigma/cargo-localbuild/bin/$tool"; \
+        ln -s "/opt/sigma/cargo-localbuild/bin/$tool" "/usr/local/bin/$tool"; \
+    done \
+    && rm /tmp/family-archive.tar /tmp/family-complete.toml
 
 ENV CARGO_TERM_COLOR=always \
     CARGO_HOME=/cache/grok-build/cargo \
