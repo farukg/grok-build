@@ -1509,11 +1509,21 @@ pub(super) fn completed_inspection(
     child: &CompletedChild,
     persisted_output: Option<&str>,
 ) -> SubagentInspection {
-    let mut inspection = completed_resident_inspection(child, persisted_output);
-    if let Some(terminal) = completed_terminal(child, persisted_output) {
-        inspection.observation = ChildObservation::Terminal(terminal);
+    match completed_terminal(child, persisted_output) {
+        Some(terminal) => SubagentInspection {
+            subagent_id: child.request.id.clone(),
+            description: child.request.description.clone(),
+            subagent_type: child.request.subagent_type.clone(),
+            started_at_epoch_ms: instant_to_epoch_ms(child.started_at),
+            persona: child.persona.clone(),
+            parent_session_id: child.request.parent_session_id.clone(),
+            child_session_id: child.child_session_id.clone(),
+            fork_parent_prompt_id: child.request.parent_prompt_id.clone(),
+            resumed_from: child.resumed_from.clone(),
+            observation: ChildObservation::Terminal(terminal),
+        },
+        None => completed_resident_inspection(child, persisted_output),
     }
-    inspection
 }
 
 /// No marker here: the notice renders the cut from `full_output_bytes`.

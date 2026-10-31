@@ -43,10 +43,10 @@ pub enum CustodyUnavailable {
 
 impl From<SubagentInspection> for ListedSubagent {
     fn from(inspection: SubagentInspection) -> Self {
-        let observation = match inspection.snapshot() {
-            Some(snapshot) => ListedSubagentObservation::Available {
-                state: snapshot.status.state(),
-                duration_ms: snapshot.duration_ms,
+        let observation = match inspection.observation.state_duration() {
+            Some((state, duration_ms)) => ListedSubagentObservation::Available {
+                state,
+                duration_ms,
             },
             None => ListedSubagentObservation::Unavailable {
                 unavailable: CustodyUnavailable::CustodyUnavailable,

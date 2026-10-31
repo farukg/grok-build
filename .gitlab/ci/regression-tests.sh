@@ -326,6 +326,8 @@ run_tests xai-grok-tools lib --all-executed \
     'implementations::grok_build::list_subagents::tests::' \
     'implementations::grok_build::control_subagent::tests::' \
     'implementations::grok_build::task::coordinator::cancel_f3_tests::' \
+    'implementations::grok_build::task::coordinator::list_owned::tests::a_paused_subagent_stays_listed_with_its_cause_next_to_a_running_one' \
+    'implementations::grok_build::task::coordinator::tests::nested_spawner_can_query_inspect_and_cancel_background_grandchild' \
     'implementations::grok_build::task::coordinator::tests::nested_spawner_lists_grandchild_in_list_running_and_list_active' || status=$?
 
 run_tests xai-grok-tools lib --all-executed \

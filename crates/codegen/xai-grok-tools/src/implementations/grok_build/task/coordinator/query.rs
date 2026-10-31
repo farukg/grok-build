@@ -302,7 +302,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let inspection = running_inspection(seed, progress);
         match target {
             ProgressTarget::Query(respond_to) => {
-                let _ = respond_to.send(inspection.snapshot());
+                let _ = respond_to.send(inspection.into_snapshot());
             }
             ProgressTarget::Inspect(respond_to) => {
                 let _ = respond_to.send(Some(inspection));

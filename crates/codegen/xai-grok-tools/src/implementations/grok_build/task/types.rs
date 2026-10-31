@@ -674,28 +674,80 @@ pub enum ChildObservation {
     Uncustodied,
 }
 
-impl SubagentInspection {
-    pub fn snapshot(&self) -> Option<SubagentSnapshot> {
+impl ChildObservation {
+    pub fn state_duration(&self) -> Option<(SubagentState, u64)> {
         use super::terminal::SubagentTerminalState;
-        let (status, duration_ms) = match &self.observation {
-            ChildObservation::Resident { status, duration_ms } => (status.clone(), *duration_ms),
-            ChildObservation::Terminal(terminal) => {
-                let status = match &terminal.state {
-                    SubagentTerminalState::Completed => SubagentSnapshotStatus::Completed {
-                        output: terminal.output.to_string(),
-                        tool_calls: terminal.tool_calls,
-                        turns: terminal.turns,
-                        worktree_path: None,
+        match self {
+            Self::Resident { status, duration_ms } => Some((status.state(), *duration_ms)),
+            Self::Terminal(terminal) => {
+                let state = match &terminal.state {
+                    SubagentTerminalState::Completed => SubagentState::Completed,
+                    SubagentTerminalState::Failed { message } => SubagentState::Failed {
+                        message: message.clone(),
                     },
-                    SubagentTerminalState::Failed { message } => SubagentSnapshotStatus::Failed {
-                        error: message.clone(),
-                    },
-                    SubagentTerminalState::Interrupted { cause } => SubagentSnapshotStatus::Cancelled {
+                    SubagentTerminalState::Interrupted { cause } => SubagentState::Interrupted {
                         cause: cause.clone(),
                     },
                 };
-                (status, terminal.duration_ms)
+                Some((state, terminal.duration_ms))
             }
+            Self::Uncustodied => None,
+        }
+    }
+
+    fn into_snapshot_parts(self) -> Option<(SubagentSnapshotStatus, u64)> {
+        match self {
+            Self::Resident { status, duration_ms } => Some((status, duration_ms)),
+            Self::Terminal(terminal) => Some((
+                terminal_snapshot_status(
+                    terminal.state,
+                    &terminal.output,
+                    terminal.tool_calls,
+                    terminal.turns,
+                ),
+                terminal.duration_ms,
+            )),
+            Self::Uncustodied => None,
+        }
+    }
+}
+
+fn terminal_snapshot_status(
+    state: super::terminal::SubagentTerminalState,
+    output: &str,
+    tool_calls: u32,
+    turns: u32,
+) -> SubagentSnapshotStatus {
+    use super::terminal::SubagentTerminalState;
+    match state {
+        SubagentTerminalState::Completed => SubagentSnapshotStatus::Completed {
+            output: output.to_owned(),
+            tool_calls,
+            turns,
+            worktree_path: None,
+        },
+        SubagentTerminalState::Failed { message } => SubagentSnapshotStatus::Failed {
+            error: message,
+        },
+        SubagentTerminalState::Interrupted { cause } => SubagentSnapshotStatus::Cancelled {
+            cause,
+        },
+    }
+}
+
+impl SubagentInspection {
+    pub fn snapshot(&self) -> Option<SubagentSnapshot> {
+        let (status, duration_ms) = match &self.observation {
+            ChildObservation::Resident { status, duration_ms } => (status.clone(), *duration_ms),
+            ChildObservation::Terminal(terminal) => (
+                terminal_snapshot_status(
+                    terminal.state.clone(),
+                    &terminal.output,
+                    terminal.tool_calls,
+                    terminal.turns,
+                ),
+                terminal.duration_ms,
+            ),
             ChildObservation::Uncustodied => return None,
         };
         Some(SubagentSnapshot {
@@ -704,6 +756,19 @@ impl SubagentInspection {
             subagent_type: self.subagent_type.clone(),
             started_at_epoch_ms: self.started_at_epoch_ms,
             persona: self.persona.clone(),
+            status,
+            duration_ms,
+        })
+    }
+
+    pub fn into_snapshot(self) -> Option<SubagentSnapshot> {
+        let (status, duration_ms) = self.observation.into_snapshot_parts()?;
+        Some(SubagentSnapshot {
+            subagent_id: self.subagent_id,
+            description: self.description,
+            subagent_type: self.subagent_type,
+            started_at_epoch_ms: self.started_at_epoch_ms,
+            persona: self.persona,
             status,
             duration_ms,
         })

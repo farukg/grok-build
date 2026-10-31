@@ -5,7 +5,7 @@ use crate::implementations::grok_build::control_subagent::{
     ControlSubagentInput, ControlSubagentTool,
 };
 use crate::implementations::grok_build::list_subagents::{
-    ListSubagentsInput, ListSubagentsOutput, ListSubagentsTool,
+    ListSubagentsInput, ListSubagentsOutput, ListSubagentsTool, ListedSubagentObservation,
 };
 use crate::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use crate::implementations::grok_build::task::types::{
@@ -66,7 +66,15 @@ async fn a_paused_subagent_stays_listed_with_its_cause_next_to_a_running_one() {
         listed
             .subagents
             .iter()
-            .map(|subagent| (subagent.subagent_id.as_str(), subagent.state.clone()))
+            .map(|subagent| {
+                let state = match &subagent.observation {
+                    ListedSubagentObservation::Available { state, .. } => state.clone(),
+                    ListedSubagentObservation::Unavailable { .. } => {
+                        panic!("confirmed child must have an available observation")
+                    }
+                };
+                (subagent.subagent_id.as_str(), state)
+            })
             .collect::<Vec<_>>(),
         [
             ("kept", SubagentState::Running),
