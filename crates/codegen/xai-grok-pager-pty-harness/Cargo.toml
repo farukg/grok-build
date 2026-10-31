@@ -2,7 +2,7 @@
 name = "xai-grok-pager-pty-harness"
 version = "0.1.0"
 edition.workspace = true
-license = "Apache-2.0"
+license.workspace = true
 authors = ["xAI"]
 description = "Shared PTY harness + scenario library for xai-grok-pager e2e tests and benchmarks."
 publish = false
@@ -10,6 +10,9 @@ publish = false
 # Not imported into the production pager binary. Spawn-only pager tests live
 # here so `cargo test -p xai-grok-pager` / `cargo test -p xai-grok-pager-bin`
 # never compile this crate, and the spawn tests never link the pager library.
+
+[lints]
+workspace = true
 
 [dependencies]
 # Headless PTY controller with alacritty_terminal-based terminal emulation,

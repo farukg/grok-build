@@ -2,7 +2,7 @@
 name = "xai-grok-pager-bin"
 version = "1.0.45"
 edition.workspace = true
-license = "Apache-2.0"
+license.workspace = true
 authors = ["xAI"]
 default-run = "xai-grok-pager"
 
@@ -14,6 +14,9 @@ default-run = "xai-grok-pager"
 [[bin]]
 name = "xai-grok-pager"
 path = "src/main.rs"
+
+[lints]
+workspace = true
 
 [dependencies]
 # The pager library (all application logic + the public API main.rs drives).

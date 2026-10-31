@@ -1,10 +1,13 @@
 [package]
-license = "Apache-2.0"
+license.workspace = true
 name = "ptyctl"
 version = "0.1.0"
 edition.workspace = true
 description = "Headless PTY controller built on alacritty_terminal"
 publish = false
+
+[lints]
+workspace = true
 
 [dependencies]
 alacritty_terminal = { workspace = true }

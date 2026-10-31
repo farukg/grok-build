@@ -1,9 +1,12 @@
 [package]
-license = "Apache-2.0"
+license.workspace = true
 name = "xai-grok-mermaid"
 version = "0.1.0"
 edition.workspace = true
 description = "Render Mermaid diagram source to a rasterized PNG behind a swappable engine trait"
+
+[lints]
+workspace = true
 
 [dependencies]
 # SVG -> PNG rasterization. `resvg` re-exports the matching `usvg` (0.47) and

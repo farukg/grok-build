@@ -1,9 +1,12 @@
 [package]
-license = "Apache-2.0"
+license.workspace = true
 name = "xai-hunk-tracker"
 version = "0.1.0"
 edition.workspace = true
 description = "Track file hunks (diffs) with agent/external attribution"
+
+[lints]
+workspace = true
 
 [dependencies]
 # External
