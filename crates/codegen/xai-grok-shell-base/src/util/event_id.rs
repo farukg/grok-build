@@ -16,6 +16,26 @@ pub fn generate_event_id(session_id: &str) -> String {
     format!("{}-{}", session_id, count)
 }
 
+/// Reserve at or above the journal frontier without wrapping the reservation.
+pub fn try_generate_event_id(session_id: &str, journal_frontier: u64) -> std::io::Result<String> {
+    let count = allocate_event_sequence(&EVENT_COUNTER, journal_frontier)?;
+    Ok(format!("{}-{}", session_id, count))
+}
+
+fn allocate_event_sequence(counter: &AtomicU64, journal_frontier: u64) -> std::io::Result<u64> {
+    let mut observed = counter.load(Ordering::SeqCst);
+    loop {
+        let candidate = observed.max(journal_frontier);
+        let next = candidate
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("event sequence exhausted"))?;
+        match counter.compare_exchange_weak(observed, next, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Ok(candidate),
+            Err(current) => observed = current,
+        }
+    }
+}
+
 /// Exclusive frontier; observing it does not allocate an event.
 pub fn next_event_sequence() -> u64 {
     EVENT_COUNTER.load(Ordering::SeqCst)
@@ -53,6 +73,27 @@ pub fn ensure_event_counter_at_least(next: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_allocation_never_wraps_at_exhaustion() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(allocate_event_sequence(&counter, 0).unwrap(), u64::MAX - 1);
+        assert!(allocate_event_sequence(&counter, 0).is_err());
+        assert!(allocate_event_sequence(&counter, 0).is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), u64::MAX);
+    }
+
+    #[test]
+    fn checked_reservation_honors_literal_journal_frontier_after_counter_reset() {
+        let counter = AtomicU64::new(0);
+        assert_eq!(allocate_event_sequence(&counter, 18_326_412).unwrap(), 18_326_412);
+        assert_eq!(allocate_event_sequence(&counter, 18_326_412).unwrap(), 18_326_413);
+        counter.store(0, Ordering::SeqCst);
+        assert_eq!(allocate_event_sequence(&counter, 18_326_414).unwrap(), 18_326_414);
+        assert_eq!(counter.load(Ordering::SeqCst), 18_326_415);
+        assert!(allocate_event_sequence(&counter, u64::MAX).is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), 18_326_415);
+    }
 
     #[test]
     fn test_generate_event_id_format() {

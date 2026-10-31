@@ -218,7 +218,25 @@ impl JsonlStorageAdapter {
                 crate::session::completion_delivery::CompletionOffer::pending(event.policy)
             };
             let mut existing = None;
+            let mut highwater = None::<u64>;
             for update in storage.read_updates_jsonl(path.clone())? {
+                let event_id = match &update {
+                    crate::session::storage::SessionUpdate::Acp(notification) => notification
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.get("eventId")),
+                    crate::session::storage::SessionUpdate::Xai(notification) => notification
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.get("eventId")),
+                };
+                if let Some(sequence) = event_id
+                    .and_then(|value| value.as_str())
+                    .and_then(|id| id.rsplit('-').next())
+                    .and_then(|suffix| suffix.parse::<u64>().ok())
+                {
+                    highwater = Some(highwater.map_or(sequence, |current| current.max(sequence)));
+                }
                 if let crate::session::storage::SessionUpdate::Xai(notification) = update {
                     let fact = notification
                         .meta
@@ -230,9 +248,8 @@ impl JsonlStorageAdapter {
                             >(value.clone())
                             .ok()
                         });
-                    if fact.is_some_and(|fact| fact.id == event.id) {
+                    if existing.is_none() && fact.is_some_and(|fact| fact.id == event.id) {
                         existing = Some(*notification);
-                        break;
                     }
                 }
             }
@@ -244,12 +261,19 @@ impl JsonlStorageAdapter {
                     notification
                 }
                 None => {
+                    let journal_frontier = match highwater {
+                        Some(highwater) => highwater.checked_add(1).ok_or_else(|| {
+                            io::Error::other("parent event sequence exhausted")
+                        })?,
+                        None => 0,
+                    };
                     let will_wake = will_wake && !projected;
                     let notification =
                         crate::agent::subagent::completion_lifecycle_notification_from_event(
                             &event,
                             &info.id.to_string(),
                             will_wake,
+                            journal_frontier,
                         )?;
                     let update =
                         crate::session::storage::SessionUpdate::Xai(Box::new(notification.clone()));

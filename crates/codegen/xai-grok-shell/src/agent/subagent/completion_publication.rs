@@ -50,10 +50,17 @@ pub(crate) fn completion_lifecycle_notification_from_event(
     event: &SubagentCompletionEvent,
     parent_session_id: &str,
     will_wake: bool,
+    journal_frontier: u64,
 ) -> std::io::Result<SessionNotification> {
-    let mut meta = None;
-    crate::util::event_id::ensure_event_id_meta(parent_session_id, &mut meta);
-    let mut meta = meta.unwrap_or_default();
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "eventId".into(),
+        crate::util::event_id::try_generate_event_id(parent_session_id, journal_frontier)?.into(),
+    );
+    meta.insert(
+        "agentTimestampMs".into(),
+        chrono::Utc::now().timestamp_millis().into(),
+    );
     meta.insert(
         "subagentCompletion".into(),
         serde_json::to_value(
@@ -177,6 +184,7 @@ pub(super) async fn publish_committed_completion(
                 &prepared.event,
                 &completion.request.parent_session_id,
                 will_wake,
+                0,
             ) else {
                 return visibility;
             };
@@ -264,6 +272,7 @@ pub(crate) fn present_child_completion(
         &event,
         &completion.request.parent_session_id,
         will_wake,
+        0,
     )
     .expect("fixture completion notification");
     let text = event.text;

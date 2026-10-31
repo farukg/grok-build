@@ -62,6 +62,156 @@ fn event(
 }
 
 #[tokio::test]
+async fn cold_publications_seed_from_parent_history_before_replay_and_retry_exactly() {
+    let (_directory, storage, info) = fixture().await;
+    let frontier = crate::util::event_id::next_event_sequence()
+        .checked_add(1_000_000)
+        .unwrap();
+    let history = serde_json::json!({
+        "timestamp": 1,
+        "method": "session/update",
+        "params": {
+            "sessionId": info.id.to_string(),
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "retained history" }
+            },
+            "_meta": { "eventId": format!("{}-{frontier}", info.id) }
+        }
+    });
+    let mut original = serde_json::to_vec(&history).unwrap();
+    original.push(b'\n');
+    std::fs::write(storage.updates_file(&info), &original).unwrap();
+    let first = event(
+        "cold-first",
+        xai_message_delivery_core::AttemptId::mint(1),
+        SubagentState::Completed,
+    );
+    let second = event(
+        "cold-second",
+        xai_message_delivery_core::AttemptId::mint(1),
+        SubagentState::Completed,
+    );
+    for event in [&first, &second] {
+        storage.prepare_subagent_completion(&info, event.clone()).await.unwrap();
+    }
+    let (first_publication, second_publication) = tokio::join!(
+        storage.publish_subagent_completion(&info, &first, true),
+        storage.publish_subagent_completion(&info, &second, true),
+    );
+    let first_publication = first_publication.unwrap();
+    let second_publication = second_publication.unwrap();
+    let sequence = |notification: &crate::extensions::notification::SessionNotification| {
+        notification.meta.as_ref().unwrap()["eventId"]
+            .as_str().unwrap().rsplit('-').next().unwrap().parse::<u64>().unwrap()
+    };
+    assert!(sequence(&first_publication.notification) > frontier);
+    assert!(sequence(&second_publication.notification) > frontier);
+    assert_ne!(sequence(&first_publication.notification), sequence(&second_publication.notification));
+    let committed = std::fs::read(storage.updates_file(&info)).unwrap();
+    assert!(committed.starts_with(&original));
+    let retry = storage.publish_subagent_completion(&info, &first, false).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&retry.notification).unwrap(),
+        serde_json::to_value(&first_publication.notification).unwrap(),
+    );
+    assert_eq!(std::fs::read(storage.updates_file(&info)).unwrap(), committed);
+    assert_eq!(storage.read_updates_jsonl(storage.updates_file(&info)).unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn retry_preserves_historical_low_completion_identity() {
+    let (_directory, storage, info) = fixture().await;
+    let completed = event(
+        "historical-child",
+        xai_message_delivery_core::AttemptId::mint(1),
+        SubagentState::Completed,
+    );
+    storage.prepare_subagent_completion(&info, completed.clone()).await.unwrap();
+    let mut old = crate::agent::subagent::completion_lifecycle_notification_from_event(
+        &completed,
+        &info.id.to_string(),
+        true,
+        0,
+    )
+    .unwrap();
+    old.meta.as_mut().unwrap()["eventId"] = serde_json::json!(format!("{}-49", info.id));
+    let update = crate::session::storage::SessionUpdate::Xai(Box::new(old.clone()));
+    let mut retained = serde_json::to_vec(&SessionUpdateEnvelope::from_update(&update).unwrap()).unwrap();
+    retained.push(b'\n');
+    std::fs::write(storage.updates_file(&info), &retained).unwrap();
+    let retry = storage.publish_subagent_completion(&info, &completed, false).await.unwrap();
+    assert_eq!(serde_json::to_value(retry.notification).unwrap(), serde_json::to_value(old).unwrap());
+    assert_eq!(std::fs::read(storage.updates_file(&info)).unwrap(), retained);
+}
+
+#[tokio::test]
+async fn exhausted_journal_rejects_new_publication_but_preserves_low_id_retry() {
+    let (_directory, storage, info) = fixture().await;
+    let completed = event(
+        "existing-child",
+        xai_message_delivery_core::AttemptId::mint(1),
+        SubagentState::Completed,
+    );
+    let pending = event(
+        "new-child",
+        xai_message_delivery_core::AttemptId::mint(1),
+        SubagentState::Completed,
+    );
+    for event in [&completed, &pending] {
+        storage
+            .prepare_subagent_completion(&info, event.clone())
+            .await
+            .unwrap();
+    }
+    let mut old = crate::agent::subagent::completion_lifecycle_notification_from_event(
+        &completed,
+        &info.id.to_string(),
+        true,
+        0,
+    )
+    .unwrap();
+    old.meta.as_mut().unwrap()["eventId"] = serde_json::json!(format!("{}-49", info.id));
+    let update = crate::session::storage::SessionUpdate::Xai(Box::new(old.clone()));
+    let mut retained = serde_json::to_vec(
+        &SessionUpdateEnvelope::from_update(&update).unwrap(),
+    )
+    .unwrap();
+    retained.push(b'\n');
+    let maximum = serde_json::json!({
+        "timestamp": 1,
+        "method": "session/update",
+        "params": {
+            "sessionId": info.id.to_string(),
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "retained maximum" }
+            },
+            "_meta": { "eventId": format!("{}-18446744073709551615", info.id) }
+        }
+    });
+    retained.extend(serde_json::to_vec(&maximum).unwrap());
+    retained.push(b'\n');
+    std::fs::write(storage.updates_file(&info), &retained).unwrap();
+
+    assert!(storage
+        .publish_subagent_completion(&info, &pending, true)
+        .await
+        .is_err());
+    assert_eq!(std::fs::read(storage.updates_file(&info)).unwrap(), retained);
+
+    let retry = storage
+        .publish_subagent_completion(&info, &completed, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(retry.notification).unwrap(),
+        serde_json::to_value(old).unwrap(),
+    );
+    assert_eq!(std::fs::read(storage.updates_file(&info)).unwrap(), retained);
+}
+
+#[tokio::test]
 async fn committed_projection_error_retries_without_a_second_model_input() {
     let (_directory, storage, info) = fixture().await;
     let event = event(
