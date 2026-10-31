@@ -15,7 +15,7 @@ pub(crate) fn apply_cancel_terminal(
     {
         return false;
     }
-    let current = app.agents.values().any(|agent| {
+    let current = app.agents.all().any(|(_, agent)| {
         agent.session.session_id.as_ref() == Some(session_id)
             && agent.subagent_sessions.get(&terminal.child_session_id).is_some_and(|info| {
                 info.subagent_id.as_ref() == subagent_id
@@ -57,7 +57,7 @@ pub(crate) fn apply_cancel_terminal(
         app,
         subagent_lifecycle::LifecycleOrigin::Reconciliation,
     );
-    app.agents.values().any(|agent| {
+    app.agents.all().any(|(_, agent)| {
         agent.session.session_id.as_ref() == Some(session_id)
             && agent.subagent_sessions.get(&child_session_id).is_some_and(|info| {
                 info.attempt.lifecycle.current_attempt_id() == attempt_id && info.is_finished()

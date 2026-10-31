@@ -7,13 +7,13 @@ use chrono::{DateTime, Utc};
 use xai_grok_tools::types::restart_recovery::RestartStartup;
 use xai_grok_tools::types::restart_stop_age::RestartStopAge;
 
-pub const STALE_AFTER: chrono::Duration = chrono::Duration::seconds(3600);
+const STALE_AFTER: chrono::Duration = chrono::Duration::seconds(3600);
 
-pub fn heartbeat_path(lock_path: &Path) -> PathBuf {
+pub(crate) fn heartbeat_path(lock_path: &Path) -> PathBuf {
     lock_path.with_extension("heartbeat")
 }
 
-pub fn classify(recorded_at: DateTime<Utc>, now: DateTime<Utc>) -> RestartStopAge {
+fn classify(recorded_at: DateTime<Utc>, now: DateTime<Utc>) -> RestartStopAge {
     if now.signed_duration_since(recorded_at) > STALE_AFTER {
         RestartStopAge::Stale
     } else {
@@ -22,7 +22,7 @@ pub fn classify(recorded_at: DateTime<Utc>, now: DateTime<Utc>) -> RestartStopAg
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RecordedStopAge {
+pub(crate) enum RecordedStopAge {
     FirstRun,
     Unknown,
     Fresh { recorded_at: DateTime<Utc> },
@@ -30,7 +30,7 @@ pub enum RecordedStopAge {
 }
 
 impl RecordedStopAge {
-    pub fn stop_age(self) -> RestartStopAge {
+    pub(crate) fn stop_age(self) -> RestartStopAge {
         match self {
             Self::FirstRun | Self::Unknown | Self::Fresh { .. } => RestartStopAge::Fresh,
             Self::Stale { .. } => RestartStopAge::Stale,
@@ -38,12 +38,12 @@ impl RecordedStopAge {
     }
 }
 
-pub struct RestartEvidence {
-    pub stop: RecordedStopAge,
-    pub startup: RestartStartup,
+pub(crate) struct RestartEvidence {
+    pub(crate) stop: RecordedStopAge,
+    pub(crate) startup: RestartStartup,
 }
 
-pub fn read_evidence(heartbeat: &Path, now: DateTime<Utc>) -> std::io::Result<RestartEvidence> {
+pub(crate) fn read_evidence(heartbeat: &Path, now: DateTime<Utc>) -> std::io::Result<RestartEvidence> {
     let contents = match std::fs::read_to_string(heartbeat) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -75,11 +75,11 @@ pub fn read_evidence(heartbeat: &Path, now: DateTime<Utc>) -> std::io::Result<Re
     Ok(RestartEvidence { stop, startup })
 }
 
-pub fn write_running_with_startup(heartbeat: &Path, startup: RestartStartup) -> std::io::Result<()> {
+pub(crate) fn write_running_with_startup(heartbeat: &Path, startup: RestartStartup) -> std::io::Result<()> {
     write_record(heartbeat, "running".into(), startup)
 }
 
-pub fn write_stopped_with_startup(heartbeat: &Path, at: DateTime<Utc>, startup: RestartStartup) -> std::io::Result<()> {
+pub(crate) fn write_stopped_with_startup(heartbeat: &Path, at: DateTime<Utc>, startup: RestartStartup) -> std::io::Result<()> {
     write_record(heartbeat, format!("stopped {}", at.to_rfc3339()), startup)
 }
 

@@ -1226,7 +1226,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             attempt_id,
             outcome,
         } => {
-            let current = app.agents.values().any(|agent| {
+            let current = app.agents.all().any(|(_, agent)| {
                 agent.session.session_id.as_ref() == Some(&session_id)
                     && agent.session_binding_epoch == binding_epoch
                     && agent.subagent_sessions.values().any(|info| {
@@ -1257,7 +1257,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 SubagentKillOutcome::RpcFailed { message } => Some(message),
             };
             if let Some(message) = message {
-                for agent in app.agents.values_mut() {
+                for (_, agent) in app.agents.all_mut() {
                     if agent.session.session_id.as_ref() != Some(&session_id)
                         || agent.session_binding_epoch != binding_epoch
                     {

@@ -1896,7 +1896,7 @@ fn set_simple_mode_no_op_when_no_active_agent() {
     assert_eq!(app.current_ui.simple_mode, Some(true));
 }
 /// `set_simple_mode_inner` propagates to **every** agent, not just the active one.
-/// Without iterating over `app.agents.values_mut()`, agent B's input_mode stays stale when the user toggles simple-mode while agent A is active.
+/// Without iterating over `app.agents.all_mut()`, agent B's input_mode stays stale when the user toggles simple-mode while agent A is active.
 #[test]
 fn set_simple_mode_propagates_to_every_agent() {
     let mut app = test_app_with_agent();
@@ -2117,7 +2117,7 @@ fn set_multiline_mode_on_dashboard_toggles_dashboard_not_agents() {
     assert!(!expect_agent(&app, AgentId(0)).multiline_mode);
 }
 /// Multi-agent fan-out: `set_multiline_mode` mutates only the ACTIVE agent's `multiline_mode`, never other agents in the registry.
-/// A refactor that loops over `app.agents.values_mut()` or touches SHARED `app.current_ui` would silently regress this contract.
+/// A refactor that loops over `app.agents.all_mut()` or touches SHARED `app.current_ui` would silently regress this contract.
 /// Only a multi-agent test catches that regression before a user opens two agents.
 #[test]
 fn set_multiline_mode_mutates_only_active_agent_not_others() {
