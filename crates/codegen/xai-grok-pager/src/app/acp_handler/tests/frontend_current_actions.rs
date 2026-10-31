@@ -1,10 +1,11 @@
 use super::*;
+use xai_chat_state::source_version::SourceVersion;
 use crate::acp::tracker::{TurnActivity, WaitingReason};
 use crate::app::agent_view::current_actions::CurrentActionsContext;
 use xai_grok_shell::session::current_actions::{
     BackendToolsObservation, CurrentActionTransition, CurrentActions, CurrentActionsEvent,
     CurrentActionsSnapshot, CurrentHook, CurrentInteraction, FrozenOwner, InteractionSource,
-    SourceVersion, TRANSITION_METHOD,
+    TRANSITION_METHOD,
 };
 
 fn lifecycle(

@@ -1,3 +1,4 @@
+use xai_chat_state::source_version::SourceVersion;
 use super::*;
 use std::future::Future;
 use xai_grok_shell::extensions::current_actions::{
@@ -291,7 +292,7 @@ fn resident_prompt_load(settlement: xai_acp_lib::ReceiverSettlement) {
 
 fn negative_capture(binding: SnapshotBinding, incarnation: uuid::Uuid) -> GenerationEnd {
     use xai_grok_shell::session::current_actions::{
-        BackendToolsObservation, CurrentActions, SourceVersion,
+        BackendToolsObservation, CurrentActions,
     };
     GenerationEnd {
         snapshot: CurrentActions {
@@ -364,7 +365,7 @@ fn stale_generation_reply_and_marker_cannot_take_current_load_custody() {
 #[test]
 fn missing_role_historical_role_and_foreign_actor_cannot_bootstrap_transition_authority() {
     use xai_grok_shell::session::current_actions::{
-        CurrentActionTransition, CurrentActionsEvent, CurrentHook, FrozenOwner, SourceVersion,
+        CurrentActionTransition, CurrentActionsEvent, CurrentHook, FrozenOwner,
     };
     let id = AgentId(0);
     let (mut app, _, prompt) = target(id, true);
@@ -429,7 +430,6 @@ fn missing_role_historical_role_and_foreign_actor_cannot_bootstrap_transition_au
 
 #[test]
 fn explicit_discard_completes_without_row_clock_ack_or_reconnect_cursor() {
-    use xai_grok_shell::session::current_actions::SourceVersion;
     for historical in [false, true] {
         let id = AgentId(0);
         let (mut app, sid, prompt) = target(id, true);

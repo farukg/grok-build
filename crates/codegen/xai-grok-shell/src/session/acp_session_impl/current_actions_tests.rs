@@ -1,6 +1,7 @@
 use super::*;
+use xai_chat_state::source_version::SourceVersion;
 use crate::session::current_actions::{
-    CurrentActions, CurrentActionsSnapshot, CurrentSamplingPhase, SnapshotBinding, SourceVersion,
+    CurrentActions, CurrentActionsSnapshot, CurrentSamplingPhase, SnapshotBinding,
     VERSION_META_KEY,
 };
 

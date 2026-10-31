@@ -88,7 +88,7 @@ pub(crate) enum CurrentSourceMetadata {
     #[default]
     Legacy,
     Malformed,
-    Version(xai_grok_shell::session::current_actions::SourceVersion),
+    Version(xai_chat_state::source_version::SourceVersion),
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

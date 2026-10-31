@@ -1,4 +1,5 @@
 use super::AgentView;
+use xai_chat_state::source_version::SourceVersion;
 use crate::acp::meta::NotificationMeta;
 use crate::acp::tracker::{CurrentToolProjection, TurnActivity, WaitingReason};
 use std::collections::{HashMap, HashSet};
@@ -10,7 +11,7 @@ use xai_grok_shell::session::current_actions::{
     CompactOwner, CompactStage, CurrentActionTransition, CurrentActions, CurrentActionsEvent,
     CurrentActionsSnapshot, CurrentCompact, CurrentHook, CurrentInteraction, CurrentSampling,
     CurrentSamplingPhase, CurrentTool, CurrentTurn, CurrentTurnPhase, FrozenOwner,
-    InteractionSource, SnapshotBinding, SourceVersion,
+    InteractionSource, SnapshotBinding,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

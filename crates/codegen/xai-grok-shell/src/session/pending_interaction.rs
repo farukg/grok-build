@@ -45,7 +45,7 @@ fn broadcast(
     gateway: &GatewaySender,
     session_id: &acp::SessionId,
     update: XaiSessionUpdate,
-    version: Option<super::current_actions::SourceVersion>,
+    version: Option<xai_chat_state::source_version::SourceVersion>,
 ) {
     let notification = SessionNotification {
         session_id: session_id.clone(),

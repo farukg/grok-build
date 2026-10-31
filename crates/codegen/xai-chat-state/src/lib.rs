@@ -41,6 +41,7 @@ pub mod image_budget;
 pub mod persistence;
 pub mod types;
 pub mod usage;
+pub mod source_version;
 
 // Re-export main types for convenience
 pub use actor::ChatStateActor;

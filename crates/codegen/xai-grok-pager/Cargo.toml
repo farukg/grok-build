@@ -97,7 +97,7 @@ xai-grok-update = { path = "../xai-grok-update", default-features = false }
 # ACP
 agent-client-protocol = { workspace = true }
 xai-acp-lib = { workspace = true }
-xai-chat-state = { path = "../xai-chat-state", optional = true }
+xai-chat-state = { path = "../xai-chat-state" }
 xai-file-utils = { path = "../xai-file-utils" }
 # Crash-recovery registry of open TUI sessions.
 xai-grok-active-sessions = { workspace = true }

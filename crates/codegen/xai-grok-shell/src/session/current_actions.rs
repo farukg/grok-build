@@ -5,6 +5,7 @@ use std::sync::Arc;
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use xai_monotonic_clock::MonotonicPoint;
+use xai_chat_state::source_version::SourceVersion;
 
 use super::acp_types::{AutomaticCompactInvocation, CompactInvocationId};
 use super::pending_interaction::{PendingInteractions, PendingKind};
@@ -19,24 +20,6 @@ pub const TRANSITION_METHOD: &str = "x.ai/current_actions/transition";
 
 #[path = "current_actions_publication.rs"]
 mod publication;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SourceVersion {
-    #[serde(deserialize_with = "deserialize_incarnation")]
-    pub incarnation: uuid::Uuid,
-    pub sequence: u64,
-}
-
-fn deserialize_incarnation<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<uuid::Uuid, D::Error> {
-    let incarnation = uuid::Uuid::deserialize(deserializer)?;
-    if incarnation.is_nil() {
-        return Err(serde::de::Error::custom("nil current-actions incarnation"));
-    }
-    Ok(incarnation)
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
